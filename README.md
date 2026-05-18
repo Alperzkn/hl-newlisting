@@ -143,9 +143,50 @@ npm run dev
 
 Within ~2 seconds you should see a `"new listing"` log line and a Telegram message.
 
-## Deployment to a DigitalOcean droplet (or any systemd host)
+## Deployment
 
-Prerequisites on the host: Node 20+, git.
+Two deployment styles are supported out of the box: **PM2** (easier if you already use it for other Node services) and **systemd** (more isolated, no Node-specific dependencies).
+
+### Option A — PM2 (Ubuntu / Debian VPS)
+
+Prerequisites: Node 20+, git, PM2 globally installed (`npm install -g pm2`).
+
+```bash
+# SSH into your VPS, then:
+node -v   # must be >= 20
+git clone https://github.com/alperzkn/hl-newlisting.git ~/hl-newlisting
+cd ~/hl-newlisting
+npm ci
+npm run build
+
+# Create .env with your secrets (file is gitignored)
+cp .env.example .env
+nano .env   # fill in TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+chmod 0600 .env
+
+# Start under PM2
+pm2 start ecosystem.config.cjs
+pm2 save                 # persist the process list across reboots
+pm2 startup              # run the printed command once if you haven't already
+
+# Verify
+pm2 status hl-newlisting
+pm2 logs hl-newlisting --lines 50
+```
+
+To update:
+
+```bash
+cd ~/hl-newlisting
+git pull
+npm ci
+npm run build
+pm2 restart hl-newlisting
+```
+
+### Option B — systemd (any Linux host)
+
+Prerequisites: Node 20+, git.
 
 ```bash
 # As root, one-time setup
