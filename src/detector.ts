@@ -6,6 +6,8 @@ export type EnrichmentInput = {
   now: string;
   leverage: Record<string, number>;
   mids: Record<string, number>;
+  /** Maps canonical spot names like "@335" → "HPL/USDC" for display. */
+  spotDisplayNames?: Record<string, string>;
 };
 
 export function buildListingEvents(diff: SnapshotDiff, enrich: EnrichmentInput): ListingEvent[] {
@@ -24,11 +26,12 @@ export function buildListingEvents(diff: SnapshotDiff, enrich: EnrichmentInput):
   }
 
   for (const symbol of diff.newSpot) {
+    const display = enrich.spotDisplayNames?.[symbol] ?? symbol;
     const event: ListingEvent = {
-      symbol,
+      symbol: display,
       market: "spot",
       detectedAt: enrich.now,
-      tradingUrl: `https://app.hyperliquid.xyz/trade/${symbol}`,
+      tradingUrl: `https://app.hyperliquid.xyz/trade/${display}`,
     };
     if (enrich.mids[symbol] !== undefined) event.midPrice = enrich.mids[symbol];
     events.push(event);

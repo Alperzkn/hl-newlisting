@@ -33,6 +33,34 @@ describe("createHlClient", () => {
     expect(result.symbols).toEqual(new Set(["PURR/USDC", "JEFF/USDC"]));
   });
 
+  it("fetchSpotMeta resolves @N names to BASE/QUOTE via the tokens array", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          universe: [
+            { name: "@335", tokens: [120, 0] },
+            { name: "@1", tokens: [2, 0] },
+            { name: "PURR/USDC" }, // legacy canonical entry, no tokens field
+          ],
+          tokens: [
+            { name: "USDC" }, // index 0
+            { name: "X" },
+            { name: "Y" }, // index 2
+            ...new Array(117).fill({ name: "filler" }),
+            { name: "HPL" }, // index 120
+          ],
+        })
+      )
+    );
+    const client = createHlClient("https://api.test");
+    const result = await client.fetchSpotMeta();
+    expect(result.symbols).toEqual(new Set(["@335", "@1", "PURR/USDC"]));
+    expect(result.displayNames).toEqual({
+      "@335": "HPL/USDC",
+      "@1": "Y/USDC",
+    });
+  });
+
   it("fetchAllMids returns price map", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ BTC: "42000.5", ETH: "2500.0" })));
     const client = createHlClient("https://api.test");

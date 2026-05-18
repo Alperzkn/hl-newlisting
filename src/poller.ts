@@ -111,6 +111,7 @@ export function createPoller(deps: PollerDeps): Poller {
         now: lastPollAt,
         leverage: meta.leverage,
         mids,
+        spotDisplayNames: spotMeta.displayNames,
       });
 
       for (const s of diff.newPerps) known.perps[s] = { firstSeen: lastPollAt };

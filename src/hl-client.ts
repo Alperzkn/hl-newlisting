@@ -7,6 +7,13 @@ export type MetaResult = {
 
 export type SpotMetaResult = {
   symbols: Set<string>;
+  /**
+   * Maps the canonical universe name (e.g. "@335") to a human-readable form
+   * (e.g. "HPL/USDC"), built by resolving each universe entry's token indices
+   * against the top-level `tokens` array. ~99% of HL spot pairs use `@N` names,
+   * so this is essential for usable notifications.
+   */
+  displayNames: Record<string, string>;
 };
 
 export type PerpDex = {
@@ -22,7 +29,10 @@ export type HlClient = {
 };
 
 type RawMeta = { universe: Array<{ name: string; maxLeverage?: number }> };
-type RawSpotMeta = { universe: Array<{ name: string }> };
+type RawSpotMeta = {
+  universe: Array<{ name: string; tokens?: number[] }>;
+  tokens?: Array<{ name: string }>;
+};
 type RawPerpDexEntry = { name: string; fullName?: string } | null;
 
 async function post<T>(url: string, body: unknown): Promise<T> {
@@ -53,7 +63,19 @@ export function createHlClient(baseUrl: string): HlClient {
     },
     async fetchSpotMeta() {
       const raw = await post<RawSpotMeta>(baseUrl, { type: "spotMeta" });
-      return { symbols: new Set(raw.universe.map((a) => a.name)) };
+      const tokens = raw.tokens ?? [];
+      const symbols = new Set<string>();
+      const displayNames: Record<string, string> = {};
+      for (const entry of raw.universe) {
+        symbols.add(entry.name);
+        const idx = entry.tokens;
+        if (idx && idx.length >= 2) {
+          const base = tokens[idx[0]]?.name;
+          const quote = tokens[idx[1]]?.name;
+          if (base && quote) displayNames[entry.name] = `${base}/${quote}`;
+        }
+      }
+      return { symbols, displayNames };
     },
     async fetchAllMids() {
       const raw = await post<Record<string, string>>(baseUrl, { type: "allMids" });

@@ -38,6 +38,25 @@ describe("buildListingEvents", () => {
     ]);
   });
 
+  it("resolves @N spot names to BASE/QUOTE via spotDisplayNames", () => {
+    const diff: SnapshotDiff = { newPerps: [], newSpot: ["@335"] };
+    const events = buildListingEvents(diff, {
+      now,
+      leverage: {},
+      mids: { "@335": 0.0123 },
+      spotDisplayNames: { "@335": "HPL/USDC" },
+    });
+    expect(events).toEqual([
+      {
+        symbol: "HPL/USDC",
+        market: "spot",
+        detectedAt: now,
+        midPrice: 0.0123,
+        tradingUrl: "https://app.hyperliquid.xyz/trade/HPL/USDC",
+      },
+    ]);
+  });
+
   it("handles missing mid price", () => {
     const diff: SnapshotDiff = { newPerps: ["NEW"], newSpot: [] };
     const events = buildListingEvents(diff, { now, leverage: { NEW: 10 }, mids: {} });
