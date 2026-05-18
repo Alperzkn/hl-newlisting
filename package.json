@@ -2,6 +2,28 @@
   "name": "hl-newlisting",
   "version": "0.1.0",
   "private": true,
+  "description": "Detects newly-listed Hyperliquid perp and spot assets via 1Hz REST polling and notifies you on Telegram (with optional macOS desktop sound).",
+  "license": "MIT",
+  "author": "alperzkn",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alperzkn/hl-newlisting.git"
+  },
+  "homepage": "https://github.com/alperzkn/hl-newlisting#readme",
+  "bugs": {
+    "url": "https://github.com/alperzkn/hl-newlisting/issues"
+  },
+  "keywords": [
+    "hyperliquid",
+    "crypto",
+    "trading",
+    "alerts",
+    "telegram",
+    "perp",
+    "spot",
+    "new-listing",
+    "notifications"
+  ],
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {

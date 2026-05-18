@@ -1,8 +1,30 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+*.tsbuildinfo
+
+# Runtime state (per-deployment)
 data/
+
+# Environment files (only .env.example is tracked)
 .env
-.env.local
+.env.*
+!.env.example
+
+# Logs
 *.log
+
+# Editor / IDE
+.vscode/
+.idea/
+.claude/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Test artifacts
 .vitest-cache/
+coverage/

@@ -1,24 +1,151 @@
 # hl-newlisting
 
-Detects newly-listed Hyperliquid perp and spot assets and notifies you on Telegram.
+A small TypeScript service that detects newly-listed [Hyperliquid](https://hyperliquid.xyz) perp and spot assets within ~1 second and notifies you on Telegram. Optionally plays a desktop sound on macOS.
 
-See `docs/superpowers/specs/2026-05-18-hyperliquid-new-listing-detector-design.md` for design.
+Built so that a phase-2 auto-trading module can consume the same `ListingEvent` stream without touching detection.
 
-## Setup
+## Features
 
-1. `cp .env.example .env` and fill in `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
-2. `npm install`
-3. `npm run dev` for local development, or `npm run build && npm start` for production.
+- Polls Hyperliquid's `meta` and `spotMeta` endpoints once per second.
+- Detects new perp and spot symbols by diffing against persisted state.
+- Notifies via Telegram with symbol, market, max leverage (perps), mid price, and a direct trading link.
+- Periodic heartbeat to Telegram so you can tell whether the service is alive.
+- Atomic state writes — a crash mid-write cannot corrupt the state file.
+- Cold-start baselines the current universe without firing false alerts.
+- Pluggable notifier fan-out — drop in extra channels or a trading module without touching the detector.
+- 34 unit tests, strict TypeScript, no production dependencies beyond `dotenv` (uses native `fetch`).
+
+## How it works
+
+```text
+┌──────────────┐    ┌──────────────┐    ┌────────────────────┐
+│  Poller      │───▶│  Detector    │───▶│  Notifier fan-out  │
+│  (1s tick)   │    │  (diff +     │    │  Telegram          │
+│              │    │   enrich)    │    │  + desktop sound   │
+└──────────────┘    └──────────────┘    └────────────────────┘
+       │                   │
+       ▼                   ▼
+  HL REST API        known-assets.json
+```
+
+Full design rationale: [docs/superpowers/specs/2026-05-18-hyperliquid-new-listing-detector-design.md](docs/superpowers/specs/2026-05-18-hyperliquid-new-listing-detector-design.md).
+
+## Requirements
+
+- Node.js 20 or newer.
+- A Telegram bot token and your chat ID (see [Telegram bot setup](#telegram-bot-setup) below).
+- macOS only for the optional desktop sound (`afplay`). The rest is cross-platform.
+
+## Quick start
+
+```bash
+git clone https://github.com/alperzkn/hl-newlisting.git
+cd hl-newlisting
+npm install
+cp .env.example .env
+# edit .env and fill in TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
+npm run dev
+```
+
+You should see two log lines within a couple of seconds:
+
+```json
+{"ts":"...","level":"info","msg":"starting hl-newlisting", ...}
+{"ts":"...","level":"info","msg":"cold start: baseline written","perps":230,"spot":297}
+```
+
+From then on the process logs only on errors, new listings, and heartbeats.
 
 ## Telegram bot setup
 
-1. Open Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, follow prompts. Save the token it gives you.
-2. Send any message to your new bot.
-3. Get your chat ID: open `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser and find `chat.id` in the response.
+1. Open Telegram and message [@BotFather](https://t.me/BotFather). Send `/newbot`, follow the prompts, and save the token it gives you.
+2. Send any message to your new bot from your own account.
+3. Open `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser. Find `result[0].message.chat.id` — that's your `TELEGRAM_CHAT_ID`.
 
-## Deployment to DigitalOcean droplet
+## Configuration
 
-Prereqs on the droplet: Node 20+, git.
+All configuration is via environment variables, loaded from `.env` locally or `/etc/hl-newlisting.env` in production.
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | ✓ | — | Bot auth token from @BotFather |
+| `TELEGRAM_CHAT_ID` | ✓ | — | Destination chat for listing alerts |
+| `TELEGRAM_HEARTBEAT_CHAT_ID` | | same as `TELEGRAM_CHAT_ID` | Destination for periodic heartbeats |
+| `HL_API_URL` | | `https://api.hyperliquid.xyz` | Hyperliquid REST base URL |
+| `POLL_INTERVAL_MS` | | `1000` | Tick interval in milliseconds |
+| `HEARTBEAT_INTERVAL_MIN` | | `60` | Heartbeat cadence in minutes |
+| `STATE_FILE_PATH` | | `./data/known-assets.json` | Where to persist the known-asset state |
+| `ENABLE_DESKTOP_SOUND` | | `false` | Play `Glass.aiff` on detection (macOS only) |
+
+## Notification format
+
+```text
+🚨 New Hyperliquid listing
+
+Symbol: NEWCOIN
+Market: perp (20x max)
+Mid:    $1.2345
+Time:   2026-05-18T12:34:56.789Z
+
+https://app.hyperliquid.xyz/trade/NEWCOIN
+```
+
+For spot listings the leverage line is omitted.
+
+## Development
+
+```bash
+npm run dev        # run with auto-reload via tsx watch
+npm test           # run the test suite (34 tests)
+npm run typecheck  # type-check without emitting JS
+npm run build      # compile to dist/
+npm start          # run the compiled build
+```
+
+### Project layout
+
+```text
+src/
+├── index.ts              # entry point, wires modules
+├── config.ts             # env var loading + validation
+├── types.ts              # ListingEvent, AssetSnapshot, KnownAssets
+├── logger.ts             # one-line JSON structured logger
+├── state.ts              # known-assets.json atomic read/write + diff
+├── hl-client.ts          # HL REST client (fetch wrapper)
+├── detector.ts           # diff → enrich → emit ListingEvent
+├── poller.ts             # 1Hz tick driving the detector
+├── heartbeat.ts          # periodic status to Telegram
+├── notifier.ts           # fan-out interface
+└── notifiers/
+    ├── telegram.ts       # Telegram Bot API adapter
+    └── desktop-sound.ts  # macOS `afplay` adapter
+```
+
+### Verifying detection locally
+
+Because the poller keeps the known-asset map in memory after cold start, the easiest way to simulate a fake "new listing" is to **edit the state file and restart** the process:
+
+```bash
+# stop the service (Ctrl+C), then:
+node -e '
+const fs=require("fs");
+const p="./data/known-assets.json";
+const s=JSON.parse(fs.readFileSync(p,"utf8"));
+const victim=Object.keys(s.perps)[0];
+console.log("removing perp:",victim);
+delete s.perps[victim];
+fs.writeFileSync(p,JSON.stringify(s,null,2));
+'
+
+# restart
+npm run dev
+```
+
+Within ~2 seconds you should see a `"new listing"` log line and a Telegram message.
+
+## Deployment to a DigitalOcean droplet (or any systemd host)
+
+Prerequisites on the host: Node 20+, git.
 
 ```bash
 # As root, one-time setup
@@ -27,7 +154,7 @@ sudo mkdir -p /opt/hl-newlisting /var/lib/hl-newlisting
 sudo chown hl-newlisting:hl-newlisting /var/lib/hl-newlisting
 
 # Deploy the code (run as your normal user)
-sudo git clone <repo-url> /opt/hl-newlisting
+sudo git clone https://github.com/alperzkn/hl-newlisting.git /opt/hl-newlisting
 cd /opt/hl-newlisting
 sudo npm ci --omit=dev
 sudo npm run build
@@ -53,4 +180,24 @@ sudo systemctl status hl-newlisting
 sudo journalctl -u hl-newlisting -f
 ```
 
-To update: `git pull`, `npm ci --omit=dev`, `npm run build`, `sudo systemctl restart hl-newlisting`.
+To update:
+
+```bash
+cd /opt/hl-newlisting
+sudo -u hl-newlisting git pull
+sudo npm ci --omit=dev
+sudo npm run build
+sudo systemctl restart hl-newlisting
+```
+
+## Phase 2 — auto-trading (not in scope here)
+
+The notifier is just one consumer of the `ListingEvent` stream. A trading module can be added as a second consumer — register it alongside the notifier in [src/index.ts](src/index.ts) and the detection path stays untouched. Strategy, sizing, and risk parameters belong inside that module.
+
+## Contributing
+
+Issues and pull requests are welcome. Please run `npm test` and `npm run typecheck` before opening a PR.
+
+## License
+
+[MIT](LICENSE) © alperzkn
