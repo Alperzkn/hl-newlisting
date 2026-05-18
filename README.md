@@ -177,12 +177,10 @@ pm2 logs hl-newlisting --lines 50
 To update:
 
 ```bash
-cd ~/hl-newlisting
-git pull
-npm ci
-npm run build
-pm2 restart hl-newlisting
+~/hl-newlisting/deploy/update.sh
 ```
+
+The script pulls `origin/main`, refuses to run if the working tree is dirty, reinstalls dependencies, rebuilds, and restarts the PM2 app (or starts it if it was stopped). Pass `BRANCH=somebranch` to deploy from a non-default branch.
 
 ### Option B — systemd (any Linux host)
 
