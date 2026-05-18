@@ -14,6 +14,9 @@ export function formatListingMessage(event: ListingEvent): string {
     } else {
       lines.push(`Market: perp${lev}`);
     }
+  } else if (event.dex) {
+    const dexLabel = event.dexFullName ? `${event.dexFullName} [${event.dex}]` : event.dex;
+    lines.push(`Market: spot on ${dexLabel}`);
   } else {
     lines.push(`Market: spot`);
   }

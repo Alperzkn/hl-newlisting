@@ -78,6 +78,38 @@ All configuration is via environment variables, loaded from `.env` locally or `/
 | `HEARTBEAT_INTERVAL_MIN` | | `60` | Heartbeat cadence in minutes |
 | `STATE_FILE_PATH` | | `./data/known-assets.json` | Where to persist the known-asset state |
 | `ENABLE_DESKTOP_SOUND` | | `false` | Play `Glass.aiff` on detection (macOS only) |
+| `ENABLE_ALTFUN` | | `false` | Watch a HyperEVM AMM factory for new pools (alt.fun graduations) |
+| `ALTFUN_FACTORY` | required if `ENABLE_ALTFUN=true` | — | HyperEVM factory contract emitting `PairCreated` |
+| `ALTFUN_QUOTE_TOKEN` | | (none) | Only alert on pairs that include this token (filters noise) |
+| `ALTFUN_RPC_URL` | | `https://rpc.hyperliquid.xyz/evm` | HyperEVM JSON-RPC endpoint |
+| `ALTFUN_POLL_INTERVAL_MS` | | `15000` | Sweep cadence for the HyperEVM watcher |
+| `ALTFUN_LABEL` | | `alt.fun` | Shown in Telegram messages (`Market: spot on alt.fun`) |
+| `ALTFUN_TRADING_URL_TEMPLATE` | | `https://app.hyperswap.exchange/swap?outputCurrency={token}` | `{token}` is substituted with the new token address |
+| `ALTFUN_STATE_FILE_PATH` | | `<dir-of-STATE_FILE_PATH>/altfun-state.json` | Where the watcher persists `lastBlock` |
+
+## Optional: alt.fun / HyperEVM watcher
+
+By default, this service polls Hyperliquid's L1 endpoints — it sees main perps, spot pairs, and HIP-3 builder dexes. It does **not** see HyperEVM-only tokens (alt.fun, pump-fun clones, etc.) because they live on the EVM side of Hyperliquid and never appear in `info/meta` or `info/spotMeta`.
+
+If you want to catch those too, enable the HyperEVM watcher. It polls a configurable AMM factory contract for `PairCreated` events (Uniswap V2 style), resolves the new token's `symbol()` via `eth_call`, and fires the same `ListingEvent` into the same notifier fan-out — so you get a normal Telegram alert when a new pool appears.
+
+```bash
+# In .env on the VPS:
+ENABLE_ALTFUN=true
+ALTFUN_FACTORY=0xYourHyperSwapFactoryAddressHere
+# Optional — only alert when the pair includes this quote token (e.g., USDC):
+ALTFUN_QUOTE_TOKEN=
+```
+
+**Finding the right factory address:** the HyperEVM ecosystem moves fast and DEX deployment addresses occasionally change. Don't trust addresses from this README or third-party tutorials blindly — verify before enabling:
+
+1. Open a recently-graduated alt.fun token's pool contract on the HyperEVM explorer.
+2. Read its `factory()` method (every Uniswap V2 pair has one).
+3. Use that returned address as `ALTFUN_FACTORY`.
+
+If `ALTFUN_QUOTE_TOKEN` is left empty, you'll be alerted on **every** pool creation on that factory — useful if you want maximum coverage but noisy. Setting it to e.g. USDC on HyperEVM narrows alerts to just USDC-paired graduations.
+
+The watcher persists `lastBlock` to `altfun-state.json` so restarts don't re-scan history.
 
 ## Notification format
 

@@ -8,6 +8,7 @@ import { createFanoutNotifier } from "./notifier.js";
 import { createTelegramNotifier, sendTelegramText } from "./notifiers/telegram.js";
 import { createDesktopSoundNotifier } from "./notifiers/desktop-sound.js";
 import { createHeartbeat } from "./heartbeat.js";
+import { createAltfunWatcher } from "./watchers/altfun.js";
 
 async function main() {
   const cfg = loadConfig();
@@ -48,6 +49,21 @@ async function main() {
   });
   getStatus = () => poller.getStatus();
 
+  const altfun = cfg.altfun
+    ? createAltfunWatcher({
+        rpcUrl: cfg.altfun.rpcUrl,
+        factoryAddress: cfg.altfun.factoryAddress,
+        quoteTokenAddress: cfg.altfun.quoteTokenAddress ?? undefined,
+        pollIntervalMs: cfg.altfun.pollIntervalMs,
+        stateFilePath: cfg.altfun.stateFilePath,
+        label: cfg.altfun.label,
+        tradingUrlTemplate: cfg.altfun.tradingUrlTemplate,
+        logger,
+        notifier,
+        onListing: () => heartbeat.reset(),
+      })
+    : null;
+
   process.on("uncaughtException", (err) => {
     logger.error("uncaughtException", { err: String(err) });
     process.exit(1);
@@ -61,6 +77,7 @@ async function main() {
     logger.info("shutting down", { signal });
     poller.stop();
     heartbeat.stop();
+    altfun?.stop();
     process.exit(0);
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
@@ -71,10 +88,19 @@ async function main() {
     dexPollIntervalMs: cfg.dexPollIntervalMs,
     heartbeatIntervalMin: cfg.heartbeatIntervalMin,
     desktopSound: cfg.enableDesktopSound,
+    altfun: cfg.altfun
+      ? {
+          factory: cfg.altfun.factoryAddress,
+          quote: cfg.altfun.quoteTokenAddress,
+          label: cfg.altfun.label,
+          pollIntervalMs: cfg.altfun.pollIntervalMs,
+        }
+      : null,
   });
 
   poller.start({ pollIntervalMs: cfg.pollIntervalMs, dexPollIntervalMs: cfg.dexPollIntervalMs });
   heartbeat.start();
+  altfun?.start();
 }
 
 main().catch((err) => {
