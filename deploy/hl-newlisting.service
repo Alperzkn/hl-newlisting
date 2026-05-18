@@ -1,0 +1,24 @@
+[Unit]
+Description=Hyperliquid new-listing detector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hl-newlisting
+Group=hl-newlisting
+WorkingDirectory=/opt/hl-newlisting
+EnvironmentFile=/etc/hl-newlisting.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hl-newlisting
+
+[Install]
+WantedBy=multi-user.target
