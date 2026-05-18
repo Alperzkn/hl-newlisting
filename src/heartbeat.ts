@@ -19,7 +19,10 @@ export function createHeartbeat(opts: HeartbeatOpts): Heartbeat {
   const schedule = () => {
     timer = setTimeout(async () => {
       const s = opts.status();
-      const text = `still alive — last poll ${s.lastPollAt} — tracking ${s.perpsCount} perps + ${s.spotCount} spot`;
+      const text =
+        `still alive — last poll ${s.lastPollAt} — ` +
+        `tracking ${s.perpsCount} perps + ${s.spotCount} spot + ` +
+        `${s.dexAssetsCount} HIP-3 (across ${s.dexCount} dexes)`;
       try {
         await opts.send(text);
       } catch {

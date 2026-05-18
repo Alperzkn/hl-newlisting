@@ -1,37 +1,61 @@
 // src/poller.ts
 import type { HlClient } from "./hl-client.js";
-import type { AssetSnapshot, KnownAssets, ListingEvent, Notifier } from "./types.js";
+import type {
+  AssetSnapshot,
+  DexSnapshot,
+  KnownAssets,
+  ListingEvent,
+  Notifier,
+} from "./types.js";
 import type { Logger } from "./logger.js";
-import { diffSnapshot, isColdStart, readState, writeState } from "./state.js";
-import { buildListingEvents } from "./detector.js";
+import {
+  baselineDex,
+  diffDexSnapshot,
+  diffSnapshot,
+  isColdStart,
+  readState,
+  writeState,
+} from "./state.js";
+import { buildDexListingEvents, buildListingEvents } from "./detector.js";
+
+export type PollerStatus = {
+  lastPollAt: string;
+  perpsCount: number;
+  spotCount: number;
+  dexCount: number;
+  dexAssetsCount: number;
+};
 
 export type PollerDeps = {
   client: HlClient;
   notifier: Notifier;
   logger: Logger;
   stateFilePath: string;
-  onListing?: (event: ListingEvent) => void; // for heartbeat reset
-  getSnapshotForStatus?: () => { perpsCount: number; spotCount: number };
+  onListing?: (event: ListingEvent) => void;
 };
 
 export type Poller = {
   runTick(): Promise<void>;
-  start(intervalMs: number): void;
+  runDexSweep(): Promise<void>;
+  start(opts: { pollIntervalMs: number; dexPollIntervalMs: number }): void;
   stop(): void;
-  getStatus(): { lastPollAt: string; perpsCount: number; spotCount: number };
+  getStatus(): PollerStatus;
 };
 
 export function createPoller(deps: PollerDeps): Poller {
   let known: KnownAssets | null = null;
   let lastPollAt = new Date(0).toISOString();
-  let interval: NodeJS.Timeout | null = null;
+  let mainInterval: NodeJS.Timeout | null = null;
+  let dexInterval: NodeJS.Timeout | null = null;
 
-  async function loadOrBaseline(snapshot: AssetSnapshot, leverage: Record<string, number>) {
+  async function ensureLoaded(snapshot: AssetSnapshot) {
+    if (known) return;
     if (await isColdStart(deps.stateFilePath)) {
       const now = new Date().toISOString();
       known = {
         perps: Object.fromEntries([...snapshot.perps].map((s) => [s, { firstSeen: now }])),
         spot: Object.fromEntries([...snapshot.spot].map((s) => [s, { firstSeen: now }])),
+        dexPerps: {},
         lastPollAt: now,
       };
       await writeState(deps.stateFilePath, known);
@@ -42,9 +66,23 @@ export function createPoller(deps: PollerDeps): Poller {
     } else {
       known = await readState(deps.stateFilePath);
       if (!known) {
-        // file existed at isColdStart check but read failed — treat as cold start
-        known = { perps: {}, spot: {}, lastPollAt: new Date().toISOString() };
+        known = { perps: {}, spot: {}, dexPerps: {}, lastPollAt: new Date().toISOString() };
         await writeState(deps.stateFilePath, known);
+      }
+    }
+  }
+
+  async function persistAndNotify(events: ListingEvent[]) {
+    if (!known) return;
+    known.lastPollAt = lastPollAt;
+    await writeState(deps.stateFilePath, known);
+    for (const e of events) {
+      deps.logger.info("new listing", { event: e });
+      try {
+        await deps.notifier.notify(e);
+        deps.onListing?.(e);
+      } catch (err) {
+        deps.logger.error("notifier threw despite fanout — should not happen", { err: String(err) });
       }
     }
   }
@@ -58,15 +96,12 @@ export function createPoller(deps: PollerDeps): Poller {
       const snapshot: AssetSnapshot = { perps: meta.symbols, spot: spotMeta.symbols };
       lastPollAt = new Date().toISOString();
 
-      if (!known) {
-        await loadOrBaseline(snapshot, meta.leverage);
-        return;
-      }
+      await ensureLoaded(snapshot);
+      if (!known) return;
 
       const diff = diffSnapshot(known, snapshot);
       if (diff.newPerps.length === 0 && diff.newSpot.length === 0) return;
 
-      // Fetch mids only when needed
       const mids = await deps.client.fetchAllMids().catch((err) => {
         deps.logger.warn("allMids fetch failed; proceeding without mids", { err: String(err) });
         return {} as Record<string, number>;
@@ -78,44 +113,119 @@ export function createPoller(deps: PollerDeps): Poller {
         mids,
       });
 
-      // Persist BEFORE notifying so a crash mid-notify won't cause re-fire.
       for (const s of diff.newPerps) known.perps[s] = { firstSeen: lastPollAt };
       for (const s of diff.newSpot) known.spot[s] = { firstSeen: lastPollAt };
-      known.lastPollAt = lastPollAt;
-      await writeState(deps.stateFilePath, known);
-
-      for (const e of events) {
-        deps.logger.info("new listing", { event: e });
-        try {
-          await deps.notifier.notify(e);
-          deps.onListing?.(e);
-        } catch (err) {
-          deps.logger.error("notifier threw despite fanout — should not happen", { err: String(err) });
-        }
-      }
+      await persistAndNotify(events);
     } catch (err) {
       deps.logger.warn("tick failed", { err: String(err) });
     }
   }
 
+  async function runDexSweep() {
+    if (!known) return;
+    let dexes;
+    try {
+      dexes = await deps.client.fetchPerpDexs();
+    } catch (err) {
+      deps.logger.warn("perpDexs fetch failed", { err: String(err) });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const collectedEvents: ListingEvent[] = [];
+    let midsCache: Record<string, number> | null = null;
+    let dirty = false;
+
+    for (const dex of dexes) {
+      try {
+        const meta = await deps.client.fetchMeta(dex.name);
+        const snapshot: DexSnapshot = {
+          dex: dex.name,
+          fullName: dex.fullName,
+          perps: meta.symbols,
+          leverage: meta.leverage,
+        };
+        const diff = diffDexSnapshot(known, snapshot);
+
+        if (diff.isNewDex) {
+          known.dexPerps[dex.name] = baselineDex(dex.name, dex.fullName, snapshot.perps, now);
+          dirty = true;
+          deps.logger.info("new dex baselined (no alerts)", {
+            dex: dex.name,
+            fullName: dex.fullName,
+            assets: snapshot.perps.size,
+          });
+          continue;
+        }
+
+        if (diff.newPerps.length === 0) continue;
+
+        if (midsCache === null) {
+          midsCache = await deps.client.fetchAllMids().catch((err) => {
+            deps.logger.warn("allMids fetch failed in dex sweep", { err: String(err) });
+            return {} as Record<string, number>;
+          });
+        }
+
+        const events = buildDexListingEvents(diff, {
+          now,
+          leverage: snapshot.leverage,
+          mids: midsCache,
+        });
+
+        const existing = known.dexPerps[dex.name];
+        existing.fullName = dex.fullName;
+        for (const s of diff.newPerps) existing.assets[s] = { firstSeen: now };
+        dirty = true;
+
+        collectedEvents.push(...events);
+      } catch (err) {
+        deps.logger.warn("dex tick failed", { dex: dex.name, err: String(err) });
+      }
+    }
+
+    if (dirty) {
+      lastPollAt = now;
+      await persistAndNotify(collectedEvents);
+    }
+  }
+
   return {
     runTick,
-    start(intervalMs: number) {
-      if (interval) return;
-      interval = setInterval(() => void runTick(), intervalMs);
-      void runTick(); // fire one immediately on start
+    runDexSweep,
+    start({ pollIntervalMs, dexPollIntervalMs }) {
+      if (mainInterval || dexInterval) return;
+      mainInterval = setInterval(() => void runTick(), pollIntervalMs);
+      dexInterval = setInterval(() => void runDexSweep(), dexPollIntervalMs);
+      void runTick();
+      // Stagger the first dex sweep slightly so it doesn't race the cold-start tick.
+      setTimeout(() => void runDexSweep(), Math.min(2000, pollIntervalMs));
     },
     stop() {
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
+      if (mainInterval) {
+        clearInterval(mainInterval);
+        mainInterval = null;
+      }
+      if (dexInterval) {
+        clearInterval(dexInterval);
+        dexInterval = null;
       }
     },
     getStatus() {
+      let dexAssetsCount = 0;
+      let dexCount = 0;
+      if (known) {
+        dexCount = Object.keys(known.dexPerps).length;
+        for (const d of Object.values(known.dexPerps)) {
+          dexAssetsCount += Object.keys(d.assets).length;
+        }
+      }
       return {
         lastPollAt,
         perpsCount: known ? Object.keys(known.perps).length : 0,
         spotCount: known ? Object.keys(known.spot).length : 0,
+        dexCount,
+        dexAssetsCount,
       };
     },
   };

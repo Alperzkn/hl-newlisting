@@ -3,6 +3,7 @@ import { loadConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import { createHlClient } from "./hl-client.js";
 import { createPoller } from "./poller.js";
+import type { PollerStatus } from "./poller.js";
 import { createFanoutNotifier } from "./notifier.js";
 import { createTelegramNotifier, sendTelegramText } from "./notifiers/telegram.js";
 import { createDesktopSoundNotifier } from "./notifiers/desktop-sound.js";
@@ -20,15 +21,16 @@ async function main() {
 
   const notifier = createFanoutNotifier(notifiers, {
     onError: (err, event) => {
-      // Log the full event so a missed notification can be recovered by grepping the journal.
       logger.error("notifier failed", { err: String(err), event });
     },
   });
 
-  let getStatus: () => { lastPollAt: string; perpsCount: number; spotCount: number } = () => ({
+  let getStatus: () => PollerStatus = () => ({
     lastPollAt: new Date().toISOString(),
     perpsCount: 0,
     spotCount: 0,
+    dexCount: 0,
+    dexAssetsCount: 0,
   });
 
   const heartbeat = createHeartbeat({
@@ -66,11 +68,12 @@ async function main() {
 
   logger.info("starting hl-newlisting", {
     pollIntervalMs: cfg.pollIntervalMs,
+    dexPollIntervalMs: cfg.dexPollIntervalMs,
     heartbeatIntervalMin: cfg.heartbeatIntervalMin,
     desktopSound: cfg.enableDesktopSound,
   });
 
-  poller.start(cfg.pollIntervalMs);
+  poller.start({ pollIntervalMs: cfg.pollIntervalMs, dexPollIntervalMs: cfg.dexPollIntervalMs });
   heartbeat.start();
 }
 

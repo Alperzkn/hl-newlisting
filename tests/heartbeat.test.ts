@@ -7,7 +7,7 @@ afterEach(() => vi.useRealTimers());
 describe("heartbeat", () => {
   it("calls send() after the interval elapses", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
-    const status = vi.fn().mockReturnValue({ lastPollAt: "t", perpsCount: 5, spotCount: 3 });
+    const status = vi.fn().mockReturnValue({ lastPollAt: "t", perpsCount: 5, spotCount: 3, dexCount: 2, dexAssetsCount: 80 });
     const hb = createHeartbeat({ intervalMs: 60_000, send, status });
     hb.start();
     expect(send).not.toHaveBeenCalled();
@@ -19,7 +19,7 @@ describe("heartbeat", () => {
 
   it("reset() restarts the timer", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
-    const status = vi.fn().mockReturnValue({ lastPollAt: "t", perpsCount: 0, spotCount: 0 });
+    const status = vi.fn().mockReturnValue({ lastPollAt: "t", perpsCount: 0, spotCount: 0, dexCount: 0, dexAssetsCount: 0 });
     const hb = createHeartbeat({ intervalMs: 60_000, send, status });
     hb.start();
     await vi.advanceTimersByTimeAsync(30_000);

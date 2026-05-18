@@ -7,6 +7,7 @@ export type Config = {
   telegramHeartbeatChatId: string;
   hlApiUrl: string;
   pollIntervalMs: number;
+  dexPollIntervalMs: number;
   heartbeatIntervalMin: number;
   stateFilePath: string;
   enableDesktopSound: boolean;
@@ -41,6 +42,7 @@ export function loadConfig(): Config {
     telegramHeartbeatChatId: process.env.TELEGRAM_HEARTBEAT_CHAT_ID || telegramChatId,
     hlApiUrl: process.env.HL_API_URL || "https://api.hyperliquid.xyz",
     pollIntervalMs: num("POLL_INTERVAL_MS", 1000),
+    dexPollIntervalMs: num("DEX_POLL_INTERVAL_MS", 10000),
     heartbeatIntervalMin: num("HEARTBEAT_INTERVAL_MIN", 60),
     stateFilePath: process.env.STATE_FILE_PATH || "./data/known-assets.json",
     enableDesktopSound: bool("ENABLE_DESKTOP_SOUND", false),

@@ -8,7 +8,12 @@ export function formatListingMessage(event: ListingEvent): string {
   lines.push(`Symbol: ${event.symbol}`);
   if (event.market === "perp") {
     const lev = event.maxLeverage !== undefined ? ` (${event.maxLeverage}x max)` : "";
-    lines.push(`Market: perp${lev}`);
+    if (event.dex) {
+      const dexLabel = event.dexFullName ? `${event.dexFullName} [${event.dex}]` : event.dex;
+      lines.push(`Market: perp on ${dexLabel}${lev}`);
+    } else {
+      lines.push(`Market: perp${lev}`);
+    }
   } else {
     lines.push(`Market: spot`);
   }

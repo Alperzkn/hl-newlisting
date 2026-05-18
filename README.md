@@ -6,14 +6,15 @@ Built so that a phase-2 auto-trading module can consume the same `ListingEvent` 
 
 ## Features
 
-- Polls Hyperliquid's `meta` and `spotMeta` endpoints once per second.
-- Detects new perp and spot symbols by diffing against persisted state.
-- Notifies via Telegram with symbol, market, max leverage (perps), mid price, and a direct trading link.
+- Polls Hyperliquid's `meta` and `spotMeta` endpoints once per second for main perps and spot.
+- Polls every HIP-3 builder-deployed perp dex (XYZ, Felix, Ventuals, HyENA, Kinetiq Markets, ABCDEx, dreamcash, Paragon, …) on a separate slower cycle so SPCX, NVDA-perp, etc. don't get missed.
+- Detects new symbols by diffing against persisted state — and treats brand-new dexes as silent cold-starts so a freshly-deployed dex doesn't spam its entire universe at once.
+- Notifies via Telegram with symbol, market (incl. dex name for builder perps), max leverage, mid price, and a direct trading link.
 - Periodic heartbeat to Telegram so you can tell whether the service is alive.
 - Atomic state writes — a crash mid-write cannot corrupt the state file.
 - Cold-start baselines the current universe without firing false alerts.
 - Pluggable notifier fan-out — drop in extra channels or a trading module without touching the detector.
-- 34 unit tests, strict TypeScript, no production dependencies beyond `dotenv` (uses native `fetch`).
+- 43 unit tests, strict TypeScript, no production dependencies beyond `dotenv` (uses native `fetch`).
 
 ## How it works
 
@@ -72,7 +73,8 @@ All configuration is via environment variables, loaded from `.env` locally or `/
 | `TELEGRAM_CHAT_ID` | ✓ | — | Destination chat for listing alerts |
 | `TELEGRAM_HEARTBEAT_CHAT_ID` | | same as `TELEGRAM_CHAT_ID` | Destination for periodic heartbeats |
 | `HL_API_URL` | | `https://api.hyperliquid.xyz` | Hyperliquid REST base URL |
-| `POLL_INTERVAL_MS` | | `1000` | Tick interval in milliseconds |
+| `POLL_INTERVAL_MS` | | `1000` | Tick interval for main perps + spot in milliseconds |
+| `DEX_POLL_INTERVAL_MS` | | `10000` | Tick interval for the HIP-3 builder dex sweep |
 | `HEARTBEAT_INTERVAL_MIN` | | `60` | Heartbeat cadence in minutes |
 | `STATE_FILE_PATH` | | `./data/known-assets.json` | Where to persist the known-asset state |
 | `ENABLE_DESKTOP_SOUND` | | `false` | Play `Glass.aiff` on detection (macOS only) |

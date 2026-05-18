@@ -9,14 +9,21 @@ export type SpotMetaResult = {
   symbols: Set<string>;
 };
 
+export type PerpDex = {
+  name: string;
+  fullName: string;
+};
+
 export type HlClient = {
-  fetchMeta(): Promise<MetaResult>;
+  fetchMeta(dex?: string): Promise<MetaResult>;
   fetchSpotMeta(): Promise<SpotMetaResult>;
   fetchAllMids(): Promise<Record<string, number>>;
+  fetchPerpDexs(): Promise<PerpDex[]>;
 };
 
 type RawMeta = { universe: Array<{ name: string; maxLeverage?: number }> };
 type RawSpotMeta = { universe: Array<{ name: string }> };
+type RawPerpDexEntry = { name: string; fullName?: string } | null;
 
 async function post<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(`${url}/info`, {
@@ -32,8 +39,10 @@ async function post<T>(url: string, body: unknown): Promise<T> {
 
 export function createHlClient(baseUrl: string): HlClient {
   return {
-    async fetchMeta() {
-      const raw = await post<RawMeta>(baseUrl, { type: "meta" });
+    async fetchMeta(dex?: string) {
+      const body: Record<string, unknown> = { type: "meta" };
+      if (dex) body.dex = dex;
+      const raw = await post<RawMeta>(baseUrl, body);
       const symbols = new Set<string>();
       const leverage: Record<string, number> = {};
       for (const a of raw.universe) {
@@ -52,6 +61,16 @@ export function createHlClient(baseUrl: string): HlClient {
       for (const [k, v] of Object.entries(raw)) {
         const n = Number(v);
         if (Number.isFinite(n)) out[k] = n;
+      }
+      return out;
+    },
+    async fetchPerpDexs() {
+      const raw = await post<RawPerpDexEntry[]>(baseUrl, { type: "perpDexs" });
+      const out: PerpDex[] = [];
+      for (const entry of raw) {
+        if (entry && typeof entry.name === "string" && entry.name.length > 0) {
+          out.push({ name: entry.name, fullName: entry.fullName ?? entry.name });
+        }
       }
       return out;
     },

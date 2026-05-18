@@ -46,4 +46,42 @@ describe("createHlClient", () => {
     const client = createHlClient("https://api.test");
     await expect(client.fetchMeta()).rejects.toThrow(/500/);
   });
+
+  it("fetchMeta with dex passes the dex param in body", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ universe: [{ name: "xyz:SPCX", maxLeverage: 5 }] }))
+    );
+    const client = createHlClient("https://api.test");
+    const result = await client.fetchMeta("xyz");
+    expect(fetchMock).toHaveBeenCalledWith("https://api.test/info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "meta", dex: "xyz" }),
+    });
+    expect(result.symbols).toEqual(new Set(["xyz:SPCX"]));
+    expect(result.leverage).toEqual({ "xyz:SPCX": 5 });
+  });
+
+  it("fetchPerpDexs returns named dexes and filters the leading null entry", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          null,
+          { name: "xyz", fullName: "XYZ" },
+          { name: "flx", fullName: "Felix Exchange" },
+        ])
+      )
+    );
+    const client = createHlClient("https://api.test");
+    const result = await client.fetchPerpDexs();
+    expect(fetchMock).toHaveBeenCalledWith("https://api.test/info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "perpDexs" }),
+    });
+    expect(result).toEqual([
+      { name: "xyz", fullName: "XYZ" },
+      { name: "flx", fullName: "Felix Exchange" },
+    ]);
+  });
 });
