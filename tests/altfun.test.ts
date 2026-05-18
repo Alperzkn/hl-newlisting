@@ -259,6 +259,53 @@ describe("createAltfunWatcher sweep", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("skips pools where neither token is an EIP-1167 proxy to the configured impl", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
+    const stateFile = path.join(tmpDir, "altfun-state.json");
+    await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
+
+    const tokenA = "0x0c63c0fb1e95c8a337835e358fe9a83dc1e01d1e"; // HYPERSQUANCH — not a proxy
+    const tokenB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const pool = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const v3Topic = eventTopicFor("v3");
+    const pad = (a: string) => "0x" + a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+    const v3Log = {
+      topics: [v3Topic, pad(tokenA), pad(tokenB), pad("0x2710")],
+      data: "0x" + "00".repeat(31) + "c8" + pool.toLowerCase().replace(/^0x/, "").padStart(64, "0"),
+      transactionHash: "0xnope",
+      blockNumber: "0x96",
+    };
+    const nonProxyBytecode = "0x6080604052";
+
+    const fetchImpl = makeRpcResponses(
+      { method: "eth_blockNumber", result: "0x96" },
+      { method: "eth_getLogs", result: [v3Log] },
+      { method: "eth_getCode", result: nonProxyBytecode },
+      { method: "eth_getCode", result: nonProxyBytecode }
+      // No eth_call should follow — pool is skipped.
+    );
+
+    const notifyMock = vi.fn().mockResolvedValue(undefined);
+    const watcher = createAltfunWatcher({
+      rpcUrl: "https://rpc.test",
+      factoryAddress: "0xff7b3e8c00e57ea31477c32a5b52a58eea47b072",
+      factoryKind: "v3",
+      tokenImplementationAddress: "0xfbec3d3c42427dc2c08a2401e53758f02cecb540",
+      pollIntervalMs: 60_000,
+      stateFilePath: stateFile,
+      label: "alt.fun",
+      tradingUrlTemplate: "https://alt.fun/coin/{token}",
+      logger: silentLogger,
+      notifier: { notify: notifyMock },
+      fetchImpl,
+    });
+
+    await watcher.runOnce();
+    expect(notifyMock).not.toHaveBeenCalled();
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
   it("picks the EIP-1167 proxy token (not token0) as the new listing — fixes V3 token ordering", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
     const stateFile = path.join(tmpDir, "altfun-state.json");

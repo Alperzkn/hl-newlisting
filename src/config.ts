@@ -79,7 +79,7 @@ function loadAltfunConfig(stateFilePath: string): AltfunConfig | null {
     label: process.env.ALTFUN_LABEL || "alt.fun",
     tradingUrlTemplate:
       process.env.ALTFUN_TRADING_URL_TEMPLATE ||
-      "https://app.hyperswap.exchange/swap?outputCurrency={token}",
+      "https://alt.fun/coin/{token}",
   };
 }
 
