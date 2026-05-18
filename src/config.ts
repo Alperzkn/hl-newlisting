@@ -17,6 +17,7 @@ export type Config = {
 export type AltfunConfig = {
   rpcUrl: string;
   factoryAddress: string;
+  factoryKind: "v2" | "v3";
   quoteTokenAddress: string | null;
   pollIntervalMs: number;
   stateFilePath: string;
@@ -52,14 +53,19 @@ function loadAltfunConfig(stateFilePath: string): AltfunConfig | null {
   if (!factoryAddress) {
     throw new Error(
       "ENABLE_ALTFUN=true but ALTFUN_FACTORY is not set. " +
-        "Set ALTFUN_FACTORY to the HyperEVM AMM factory address (e.g. HyperSwap V2 factory)."
+        "Set ALTFUN_FACTORY to the HyperEVM AMM factory address."
     );
+  }
+  const factoryKindRaw = (process.env.ALTFUN_FACTORY_KIND || "v3").trim().toLowerCase();
+  if (factoryKindRaw !== "v2" && factoryKindRaw !== "v3") {
+    throw new Error(`ALTFUN_FACTORY_KIND must be "v2" or "v3", got: ${factoryKindRaw}`);
   }
   const quote = process.env.ALTFUN_QUOTE_TOKEN?.trim();
   const defaultStateDir = path.dirname(stateFilePath);
   return {
     rpcUrl: process.env.ALTFUN_RPC_URL || "https://rpc.hyperliquid.xyz/evm",
     factoryAddress,
+    factoryKind: factoryKindRaw,
     quoteTokenAddress: quote ? quote : null,
     pollIntervalMs: num("ALTFUN_POLL_INTERVAL_MS", 15000),
     stateFilePath: process.env.ALTFUN_STATE_FILE_PATH || path.join(defaultStateDir, "altfun-state.json"),

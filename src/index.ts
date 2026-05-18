@@ -53,6 +53,7 @@ async function main() {
     ? createAltfunWatcher({
         rpcUrl: cfg.altfun.rpcUrl,
         factoryAddress: cfg.altfun.factoryAddress,
+        factoryKind: cfg.altfun.factoryKind,
         quoteTokenAddress: cfg.altfun.quoteTokenAddress ?? undefined,
         pollIntervalMs: cfg.altfun.pollIntervalMs,
         stateFilePath: cfg.altfun.stateFilePath,

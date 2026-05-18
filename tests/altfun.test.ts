@@ -5,6 +5,7 @@ import os from "node:os";
 import {
   createAltfunWatcher,
   decodeAbiString,
+  eventTopicFor,
   pairCreatedTopic,
   topicToAddress,
 } from "../src/watchers/altfun.js";
@@ -96,6 +97,7 @@ describe("createAltfunWatcher cold start", () => {
     const watcher = createAltfunWatcher({
       rpcUrl: "https://rpc.test",
       factoryAddress: FACTORY,
+      factoryKind: "v2",
       pollIntervalMs: 60_000,
       stateFilePath: stateFile,
       label: "alt.fun",
@@ -152,6 +154,7 @@ describe("createAltfunWatcher sweep", () => {
     const watcher = createAltfunWatcher({
       rpcUrl: "https://rpc.test",
       factoryAddress: FACTORY,
+      factoryKind: "v2",
       quoteTokenAddress: quote,
       pollIntervalMs: 60_000,
       stateFilePath: stateFile,
@@ -170,6 +173,74 @@ describe("createAltfunWatcher sweep", () => {
     expect(event.dex).toBe("alt.fun");
     expect(event.tradingUrl).toBe(`https://example.test/${newToken}`);
     expect(watcher.getLastBlock()).toBe(150);
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("decodes V3 PoolCreated where pool address is the second 32-byte data slot", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
+    const stateFile = path.join(tmpDir, "altfun-state.json");
+    await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
+
+    const newToken = "0x495f3eb3ac312e03158a58f1c995dbd791500000";
+    const quote = "0x5555555555555555555555555555555555555555";
+    const pool = "0x4a96c7b51b8d091b4b3bad81933f21f491c5d2bc";
+    const v3Topic = eventTopicFor("v3");
+    const pad = (a: string) => "0x" + a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+    const v3Log = {
+      // PoolCreated has 4 topics: sig, token0, token1, fee
+      topics: [v3Topic, pad(newToken), pad(quote), pad("0xbb8")],
+      // data: tickSpacing (slot 0) + pool address (slot 1)
+      data:
+        "0x" +
+        "00".repeat(31) +
+        "3c" + // tickSpacing = 60
+        pool.toLowerCase().replace(/^0x/, "").padStart(64, "0"),
+      transactionHash: "0xdef",
+      blockNumber: "0x96",
+    };
+    const symbolHex =
+      "0x" +
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      "0000000000000000000000000000000000000000000000000000000000000006" +
+      "53544f4e4b53" +
+      "00".repeat(26);
+    const nameHex =
+      "0x" +
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      "0000000000000000000000000000000000000000000000000000000000000006" +
+      "53746f6e6b73" +
+      "00".repeat(26);
+
+    const fetchImpl = makeRpcResponses(
+      { method: "eth_blockNumber", result: "0x96" },
+      { method: "eth_getLogs", result: [v3Log] },
+      { method: "eth_call", result: symbolHex },
+      { method: "eth_call", result: nameHex }
+    );
+
+    const notifyMock = vi.fn().mockResolvedValue(undefined);
+    const watcher = createAltfunWatcher({
+      rpcUrl: "https://rpc.test",
+      factoryAddress: "0xff7b3e8c00e57ea31477c32a5b52a58eea47b072",
+      factoryKind: "v3",
+      quoteTokenAddress: quote,
+      pollIntervalMs: 60_000,
+      stateFilePath: stateFile,
+      label: "alt.fun",
+      tradingUrlTemplate: "https://example.test/{token}?pool={pair}",
+      logger: silentLogger,
+      notifier: { notify: notifyMock },
+      fetchImpl,
+    });
+
+    await watcher.runOnce();
+    expect(notifyMock).toHaveBeenCalledOnce();
+    const event = notifyMock.mock.calls[0][0];
+    expect(event.symbol).toBe("STONKS");
+    expect(event.market).toBe("spot");
+    expect(event.dex).toBe("alt.fun");
+    expect(event.tradingUrl).toBe(`https://example.test/${newToken}?pool=${pool}`);
 
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
@@ -194,6 +265,7 @@ describe("createAltfunWatcher sweep", () => {
     const watcher = createAltfunWatcher({
       rpcUrl: "https://rpc.test",
       factoryAddress: FACTORY,
+      factoryKind: "v2",
       quoteTokenAddress: quote,
       pollIntervalMs: 60_000,
       stateFilePath: stateFile,
