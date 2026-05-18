@@ -72,3 +72,43 @@ describe("writeState", () => {
     expect(entries).not.toContain(`${path.basename(stateFile)}.tmp`);
   });
 });
+
+import { diffSnapshot } from "../src/state.js";
+
+describe("diffSnapshot", () => {
+  const known: KnownAssets = {
+    perps: { BTC: { firstSeen: "t0" }, ETH: { firstSeen: "t0" } },
+    spot: { PURR: { firstSeen: "t0" } },
+    lastPollAt: "t0",
+  };
+
+  it("returns empty arrays when snapshot matches known", () => {
+    const result = diffSnapshot(known, { perps: new Set(["BTC", "ETH"]), spot: new Set(["PURR"]) });
+    expect(result.newPerps).toEqual([]);
+    expect(result.newSpot).toEqual([]);
+  });
+
+  it("returns new perp symbols", () => {
+    const result = diffSnapshot(known, {
+      perps: new Set(["BTC", "ETH", "SOL"]),
+      spot: new Set(["PURR"]),
+    });
+    expect(result.newPerps).toEqual(["SOL"]);
+    expect(result.newSpot).toEqual([]);
+  });
+
+  it("returns new spot symbols", () => {
+    const result = diffSnapshot(known, {
+      perps: new Set(["BTC", "ETH"]),
+      spot: new Set(["PURR", "JEFF"]),
+    });
+    expect(result.newPerps).toEqual([]);
+    expect(result.newSpot).toEqual(["JEFF"]);
+  });
+
+  it("ignores removals (assets no longer in universe)", () => {
+    const result = diffSnapshot(known, { perps: new Set(["BTC"]), spot: new Set([]) });
+    expect(result.newPerps).toEqual([]);
+    expect(result.newSpot).toEqual([]);
+  });
+});

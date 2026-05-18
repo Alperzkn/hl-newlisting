@@ -2,6 +2,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { KnownAssets } from "./types.js";
+import type { AssetSnapshot } from "./types.js";
+
+export type SnapshotDiff = {
+  newPerps: string[];
+  newSpot: string[];
+};
 
 export async function isColdStart(filePath: string): Promise<boolean> {
   try {
@@ -27,4 +33,10 @@ export async function writeState(filePath: string, state: KnownAssets): Promise<
   const tmp = `${filePath}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(state, null, 2));
   await fs.rename(tmp, filePath);
+}
+
+export function diffSnapshot(known: KnownAssets, snapshot: AssetSnapshot): SnapshotDiff {
+  const newPerps = [...snapshot.perps].filter((s) => !(s in known.perps));
+  const newSpot = [...snapshot.spot].filter((s) => !(s in known.spot));
+  return { newPerps, newSpot };
 }
