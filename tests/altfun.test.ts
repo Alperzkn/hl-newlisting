@@ -5,6 +5,7 @@ import os from "node:os";
 import {
   createAltfunWatcher,
   decodeAbiString,
+  eip1167Implementation,
   eventTopicFor,
   pairCreatedTopic,
   topicToAddress,
@@ -60,6 +61,19 @@ describe("topicToAddress", () => {
   it("extracts the last 20 bytes as a checksummed lowercase address", () => {
     const topic = "0x000000000000000000000000abcdef0123456789abcdef0123456789abcdef01";
     expect(topicToAddress(topic)).toBe("0xabcdef0123456789abcdef0123456789abcdef01");
+  });
+});
+
+describe("eip1167Implementation", () => {
+  it("extracts the implementation address from a minimal-proxy bytecode", () => {
+    const code =
+      "0x363d3d373d3d3d363d73fbec3d3c42427dc2c08a2401e53758f02cecb5405af43d82803e903d91602b57fd5bf3";
+    expect(eip1167Implementation(code)).toBe("0xfbec3d3c42427dc2c08a2401e53758f02cecb540");
+  });
+
+  it("returns null for non-proxy bytecode", () => {
+    expect(eip1167Implementation("0x6080604052")).toBeNull();
+    expect(eip1167Implementation("0x")).toBeNull();
   });
 });
 
@@ -241,6 +255,84 @@ describe("createAltfunWatcher sweep", () => {
     expect(event.market).toBe("spot");
     expect(event.dex).toBe("alt.fun");
     expect(event.tradingUrl).toBe(`https://example.test/${newToken}?pool=${pool}`);
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("picks the EIP-1167 proxy token (not token0) as the new listing — fixes V3 token ordering", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
+    const stateFile = path.join(tmpDir, "altfun-state.json");
+    await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
+
+    // Reproduces the real ALTSZN graduation: token0 is the spoof "USDC" (not a proxy),
+    // token1 is the alt.fun token (proxy to 0xfbec…b540). The watcher must pick token1.
+    const spoofUsdc = "0xb88339cb7199b77e23db6e890353e22632ba630f"; // token0 — regular contract
+    const altfunToken = "0xc8c1829078ec5735d40ac3ff39e6403c34000000"; // token1 — proxy
+    const impl = "0xfbec3d3c42427dc2c08a2401e53758f02cecb540";
+    const pool = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const v3Topic = eventTopicFor("v3");
+    const pad = (a: string) => "0x" + a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+    const v3Log = {
+      topics: [v3Topic, pad(spoofUsdc), pad(altfunToken), pad("0x2710")],
+      data:
+        "0x" +
+        "00".repeat(31) + "c8" +
+        pool.toLowerCase().replace(/^0x/, "").padStart(64, "0"),
+      transactionHash: "0xfed",
+      blockNumber: "0x96",
+    };
+    const proxyBytecode =
+      "0x363d3d373d3d3d363d73" +
+      impl.slice(2) +
+      "5af43d82803e903d91602b57fd5bf3";
+    const altsznSymHex =
+      "0x" +
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      "0000000000000000000000000000000000000000000000000000000000000006" +
+      "414c54535a4e" + // "ALTSZN"
+      "00".repeat(26);
+    const altsznNameHex =
+      "0x" +
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      "0000000000000000000000000000000000000000000000000000000000000006" +
+      "414c54535a4e" +
+      "00".repeat(26);
+    // Spoof USDC bytecode (just a non-proxy stub)
+    const spoofBytecode = "0x6080604052";
+
+    const fetchImpl = makeRpcResponses(
+      { method: "eth_blockNumber", result: "0x96" },
+      { method: "eth_getLogs", result: [v3Log] },
+      // pickNewToken calls eth_getCode on token0 then token1 (Promise.all order is
+      // implementation-defined but our mock requires deterministic ordering, so we
+      // match the order the implementation actually emits)
+      { method: "eth_getCode", result: spoofBytecode },
+      { method: "eth_getCode", result: proxyBytecode },
+      { method: "eth_call", result: altsznSymHex }, // symbol()
+      { method: "eth_call", result: altsznNameHex } // name()
+    );
+
+    const notifyMock = vi.fn().mockResolvedValue(undefined);
+    const watcher = createAltfunWatcher({
+      rpcUrl: "https://rpc.test",
+      factoryAddress: "0xff7b3e8c00e57ea31477c32a5b52a58eea47b072",
+      factoryKind: "v3",
+      tokenImplementationAddress: impl,
+      pollIntervalMs: 60_000,
+      stateFilePath: stateFile,
+      label: "alt.fun",
+      tradingUrlTemplate: "https://example.test/{token}",
+      logger: silentLogger,
+      notifier: { notify: notifyMock },
+      fetchImpl,
+    });
+
+    await watcher.runOnce();
+    expect(notifyMock).toHaveBeenCalledOnce();
+    const event = notifyMock.mock.calls[0][0];
+    expect(event.symbol).toBe("ALTSZN");
+    // CRUCIAL: the URL must point at the alt.fun token (token1), NOT the spoof USDC (token0)
+    expect(event.tradingUrl).toBe(`https://example.test/${altfunToken}`);
 
     await fs.rm(tmpDir, { recursive: true, force: true });
   });

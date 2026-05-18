@@ -55,6 +55,7 @@ async function main() {
         factoryAddress: cfg.altfun.factoryAddress,
         factoryKind: cfg.altfun.factoryKind,
         quoteTokenAddress: cfg.altfun.quoteTokenAddress ?? undefined,
+        tokenImplementationAddress: cfg.altfun.tokenImplementationAddress ?? undefined,
         pollIntervalMs: cfg.altfun.pollIntervalMs,
         stateFilePath: cfg.altfun.stateFilePath,
         label: cfg.altfun.label,

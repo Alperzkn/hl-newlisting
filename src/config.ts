@@ -19,6 +19,7 @@ export type AltfunConfig = {
   factoryAddress: string;
   factoryKind: "v2" | "v3";
   quoteTokenAddress: string | null;
+  tokenImplementationAddress: string | null;
   pollIntervalMs: number;
   stateFilePath: string;
   label: string;
@@ -61,12 +62,18 @@ function loadAltfunConfig(stateFilePath: string): AltfunConfig | null {
     throw new Error(`ALTFUN_FACTORY_KIND must be "v2" or "v3", got: ${factoryKindRaw}`);
   }
   const quote = process.env.ALTFUN_QUOTE_TOKEN?.trim();
+  const tokenImplRaw = process.env.ALTFUN_TOKEN_IMPL;
+  const tokenImpl =
+    tokenImplRaw === undefined
+      ? "0xfbec3d3c42427dc2c08a2401e53758f02cecb540"
+      : tokenImplRaw.trim();
   const defaultStateDir = path.dirname(stateFilePath);
   return {
     rpcUrl: process.env.ALTFUN_RPC_URL || "https://rpc.hyperliquid.xyz/evm",
     factoryAddress,
     factoryKind: factoryKindRaw,
     quoteTokenAddress: quote ? quote : null,
+    tokenImplementationAddress: tokenImpl ? tokenImpl : null,
     pollIntervalMs: num("ALTFUN_POLL_INTERVAL_MS", 15000),
     stateFilePath: process.env.ALTFUN_STATE_FILE_PATH || path.join(defaultStateDir, "altfun-state.json"),
     label: process.env.ALTFUN_LABEL || "alt.fun",
