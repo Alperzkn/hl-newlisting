@@ -44,3 +44,31 @@ describe("readState", () => {
     expect(loaded).toEqual(data);
   });
 });
+
+describe("writeState", () => {
+  it("creates the state file with correct content", async () => {
+    const data: KnownAssets = {
+      perps: { ETH: { firstSeen: "2024-02-01T00:00:00.000Z" } },
+      spot: { PURR: { firstSeen: "2024-02-01T00:00:00.000Z" } },
+      lastPollAt: "2024-02-01T00:00:00.000Z",
+    };
+    await writeState(stateFile, data);
+    const roundTripped = await readState(stateFile);
+    expect(roundTripped).toEqual(data);
+  });
+
+  it("creates parent directories if missing", async () => {
+    const nested = path.join(tmpDir, "a", "b", "c", "state.json");
+    const data: KnownAssets = { perps: {}, spot: {}, lastPollAt: "x" };
+    await writeState(nested, data);
+    expect(await readState(nested)).toEqual(data);
+  });
+
+  it("does not leave a .tmp file behind on success", async () => {
+    const data: KnownAssets = { perps: {}, spot: {}, lastPollAt: "x" };
+    await writeState(stateFile, data);
+    const entries = await fs.readdir(tmpDir);
+    expect(entries).toContain(path.basename(stateFile));
+    expect(entries).not.toContain(`${path.basename(stateFile)}.tmp`);
+  });
+});
