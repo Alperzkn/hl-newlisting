@@ -384,6 +384,71 @@ describe("createAltfunWatcher sweep", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("relaxed mode: picks the non-quote side via quoteAddresses, emits on every pool", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
+    const stateFile = path.join(tmpDir, "altfun-state.json");
+    await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
+
+    // Mirrors the HypeSato graduation: a regular ERC20 (not a proxy) paired
+    // against alt.fun's spoof-USDC quote. Old strict mode skipped these.
+    const newToken = "0xb872b1700cdeca2a6364c6a30485bb89e18cf558";
+    const quote = "0xb88339cb7199b77e23db6e890353e22632ba630f";
+    const pool = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const v3Topic = eventTopicFor("v3");
+    const pad = (a: string) => "0x" + a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+    const v3Log = {
+      // Note: token0 = newToken, token1 = quote (real V3 ordering depends on
+      // numeric address comparison; we hardcode it here for the test)
+      topics: [v3Topic, pad(newToken), pad(quote), pad("0x2710")],
+      data: "0x" + "00".repeat(31) + "c8" + pool.toLowerCase().replace(/^0x/, "").padStart(64, "0"),
+      transactionHash: "0xhs",
+      blockNumber: "0x96",
+    };
+    const symHex =
+      "0x" +
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      "0000000000000000000000000000000000000000000000000000000000000002" +
+      "4853" +
+      "00".repeat(30);
+    const nameHex =
+      "0x" +
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      "0000000000000000000000000000000000000000000000000000000000000008" +
+      "4879706553617465" +
+      "00".repeat(24);
+
+    const fetchImpl = makeRpcResponses(
+      { method: "eth_blockNumber", result: "0x96" },
+      { method: "eth_getLogs", result: [v3Log] },
+      { method: "eth_call", result: symHex },
+      { method: "eth_call", result: nameHex }
+    );
+
+    const notifyMock = vi.fn().mockResolvedValue(undefined);
+    const watcher = createAltfunWatcher({
+      rpcUrl: "https://rpc.test",
+      factoryAddress: "0xff7b3e8c00e57ea31477c32a5b52a58eea47b072",
+      factoryKind: "v3",
+      // No tokenImplementationAddress → relaxed mode
+      quoteAddresses: [quote],
+      pollIntervalMs: 60_000,
+      stateFilePath: stateFile,
+      label: "alt.fun",
+      tradingUrlTemplate: "https://alt.fun/coin/{token}",
+      logger: silentLogger,
+      notifier: { notify: notifyMock },
+      fetchImpl,
+    });
+
+    await watcher.runOnce();
+    expect(notifyMock).toHaveBeenCalledOnce();
+    const event = notifyMock.mock.calls[0][0];
+    expect(event.symbol).toBe("HS");
+    expect(event.tradingUrl).toBe(`https://alt.fun/coin/${newToken}`);
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
   it("filters out pairs that don't match the configured quote token", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
     const stateFile = path.join(tmpDir, "altfun-state.json");
