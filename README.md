@@ -78,37 +78,27 @@ All configuration is via environment variables, loaded from `.env` locally or `/
 | `HEARTBEAT_INTERVAL_MIN` | | `60` | Heartbeat cadence in minutes |
 | `STATE_FILE_PATH` | | `./data/known-assets.json` | Where to persist the known-asset state |
 | `ENABLE_DESKTOP_SOUND` | | `false` | Play `Glass.aiff` on detection (macOS only) |
-| `ENABLE_ALTFUN` | | `false` | Watch a HyperEVM AMM factory for new pools (alt.fun graduations) |
-| `ALTFUN_FACTORY` | required if `ENABLE_ALTFUN=true` | `0xff7b3e8c00e57ea31477c32a5b52a58eea47b072` (in `.env.example`) | HyperEVM factory contract |
-| `ALTFUN_FACTORY_KIND` | | `v3` | `v3` = Uniswap V3 `PoolCreated`, `v2` = Uniswap V2 `PairCreated` |
-| `ALTFUN_QUOTE_TOKEN` | | `0x5555555555555555555555555555555555555555` (WHYPE, in `.env.example`) | Only alert on pools that include this token |
+| `ENABLE_ALTFUN` | | `false` | Watch alt.fun's Bonding contract for graduations |
+| `ALTFUN_BONDING_CONTRACT` | | `0xb68811BcC0e4FcD825aA49F9453b065ddF752FcB` | alt.fun Bonding contract emitting `TokenGraduated` |
 | `ALTFUN_RPC_URL` | | `https://rpc.hyperliquid.xyz/evm` | HyperEVM JSON-RPC endpoint |
 | `ALTFUN_POLL_INTERVAL_MS` | | `15000` | Sweep cadence for the HyperEVM watcher |
 | `ALTFUN_LABEL` | | `alt.fun` | Shown in Telegram messages (`Market: spot on alt.fun`) |
 | `ALTFUN_TRADING_URL_TEMPLATE` | | `https://alt.fun/coin/{token}` | `{token}` / `{pair}` substituted at notify time |
 | `ALTFUN_STATE_FILE_PATH` | | `<dir-of-STATE_FILE_PATH>/altfun-state.json` | Where the watcher persists `lastBlock` |
 
-## Optional: alt.fun / HyperEVM watcher
+## Optional: alt.fun graduation watcher
 
 By default, this service polls Hyperliquid's L1 endpoints — it sees main perps, spot pairs, and HIP-3 builder dexes. It does **not** see HyperEVM-only tokens (alt.fun, pump-fun clones, etc.) because they live on the EVM side of Hyperliquid and never appear in `info/meta` or `info/spotMeta`.
 
-If you want to catch those too, enable the HyperEVM watcher. It polls a configurable AMM factory contract for new-pool events, resolves the new token's `symbol()` via `eth_call`, and fires the same `ListingEvent` into the same notifier fan-out — so you get a normal Telegram alert when a new pool appears.
+If you want alt.fun graduations too, enable the HyperEVM watcher. It polls alt.fun's **Bonding contract** for the `TokenGraduated` event — the authoritative graduation signal documented at [docs.alt.fun/integrations](https://docs.alt.fun/integrations). The event names the graduated token and its new AMM pool directly, so there's no token-ordering or quote-token guesswork. The watcher resolves the token's `symbol()` via `eth_call` and fires the same `ListingEvent` into the same notifier fan-out.
 
 ```bash
-# In .env — alt.fun graduations land on a Uniswap V3 fork at this factory.
-# Verify the address on the HyperEVM explorer before trusting it; DEX addresses
-# move occasionally.
+# In .env:
 ENABLE_ALTFUN=true
-ALTFUN_FACTORY=0xff7b3e8c00e57ea31477c32a5b52a58eea47b072
-ALTFUN_FACTORY_KIND=v3
-# Optional — narrow alerts to pools that include WHYPE (alt.fun's quote token).
-# Leave empty to alert on every pool created by the factory.
-ALTFUN_QUOTE_TOKEN=0x5555555555555555555555555555555555555555
+ALTFUN_BONDING_CONTRACT=0xb68811BcC0e4FcD825aA49F9453b065ddF752FcB
 ```
 
-Supports both V2 (`PairCreated`) and V3 (`PoolCreated`) factory styles via `ALTFUN_FACTORY_KIND`. alt.fun uses V3.
-
-**To verify a factory address yourself:** open a recently-graduated alt.fun token's pool contract on the HyperEVM explorer, call its `factory()` method, and confirm the returned address matches `ALTFUN_FACTORY`.
+`TokenGraduated(address indexed token, address indexed pairAddress, …)` fires when a token's bonding curve hits the threshold and liquidity migrates to an AMM pool. Brand-new tokens that are still on the bonding curve do **not** trigger this — only graduations.
 
 The watcher persists `lastBlock` to `altfun-state.json` so restarts don't re-scan history. HyperEVM's public RPC limits `eth_getLogs` to 1000-block windows; the watcher chunks queries automatically.
 

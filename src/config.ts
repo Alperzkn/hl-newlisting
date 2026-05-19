@@ -16,11 +16,7 @@ export type Config = {
 
 export type AltfunConfig = {
   rpcUrl: string;
-  factoryAddress: string;
-  factoryKind: "v2" | "v3";
-  quoteTokenAddress: string | null;
-  tokenImplementationAddress: string | null;
-  quoteAddresses: string[];
+  bondingContract: string;
   pollIntervalMs: number;
   stateFilePath: string;
   label: string;
@@ -51,45 +47,18 @@ import path from "node:path";
 
 function loadAltfunConfig(stateFilePath: string): AltfunConfig | null {
   if (!bool("ENABLE_ALTFUN", false)) return null;
-  const factoryAddress = process.env.ALTFUN_FACTORY?.trim();
-  if (!factoryAddress) {
-    throw new Error(
-      "ENABLE_ALTFUN=true but ALTFUN_FACTORY is not set. " +
-        "Set ALTFUN_FACTORY to the HyperEVM AMM factory address."
-    );
-  }
-  const factoryKindRaw = (process.env.ALTFUN_FACTORY_KIND || "v3").trim().toLowerCase();
-  if (factoryKindRaw !== "v2" && factoryKindRaw !== "v3") {
-    throw new Error(`ALTFUN_FACTORY_KIND must be "v2" or "v3", got: ${factoryKindRaw}`);
-  }
-  const quote = process.env.ALTFUN_QUOTE_TOKEN?.trim();
-  // Strict mode is off by default. Setting ALTFUN_TOKEN_IMPL turns it on and
-  // restricts alerts to pools where one side is an EIP-1167 proxy to that impl.
-  const tokenImpl = process.env.ALTFUN_TOKEN_IMPL?.trim() || null;
-  // Relaxed-mode quote list — used to identify the "new" side. Defaults to the
-  // two quote tokens we've seen this factory use most often: alt.fun's internal
-  // spoof-USDC (0xb88339cb…630f) and WHYPE (0x555…555).
-  const quoteAddressesRaw = (
-    process.env.ALTFUN_QUOTE_ADDRESSES ??
-    "0xb88339cb7199b77e23db6e890353e22632ba630f,0x5555555555555555555555555555555555555555"
-  ).trim();
-  const quoteAddresses = quoteAddressesRaw
-    ? quoteAddressesRaw.split(",").map((s) => s.trim()).filter(Boolean)
-    : [];
   const defaultStateDir = path.dirname(stateFilePath);
   return {
     rpcUrl: process.env.ALTFUN_RPC_URL || "https://rpc.hyperliquid.xyz/evm",
-    factoryAddress,
-    factoryKind: factoryKindRaw,
-    quoteTokenAddress: quote ? quote : null,
-    tokenImplementationAddress: tokenImpl,
-    quoteAddresses,
+    // alt.fun's Bonding contract (lifecycle / curve state). It emits the
+    // authoritative TokenGraduated event. See https://docs.alt.fun/integrations.
+    bondingContract:
+      process.env.ALTFUN_BONDING_CONTRACT?.trim() ||
+      "0xb68811BcC0e4FcD825aA49F9453b065ddF752FcB",
     pollIntervalMs: num("ALTFUN_POLL_INTERVAL_MS", 15000),
     stateFilePath: process.env.ALTFUN_STATE_FILE_PATH || path.join(defaultStateDir, "altfun-state.json"),
     label: process.env.ALTFUN_LABEL || "alt.fun",
-    tradingUrlTemplate:
-      process.env.ALTFUN_TRADING_URL_TEMPLATE ||
-      "https://alt.fun/coin/{token}",
+    tradingUrlTemplate: process.env.ALTFUN_TRADING_URL_TEMPLATE || "https://alt.fun/coin/{token}",
   };
 }
 

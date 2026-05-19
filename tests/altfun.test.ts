@@ -5,9 +5,7 @@ import os from "node:os";
 import {
   createAltfunWatcher,
   decodeAbiString,
-  eip1167Implementation,
-  eventTopicFor,
-  pairCreatedTopic,
+  tokenGraduatedTopic,
   topicToAddress,
 } from "../src/watchers/altfun.js";
 import type { Logger } from "../src/logger.js";
@@ -20,33 +18,31 @@ const silentLogger: Logger = {
   error: () => {},
 };
 
-const FACTORY = "0x4df039804873717bff7d03694fb941cf0469b79e";
-const PAIR_TOPIC = pairCreatedTopic();
+const BONDING = "0xb68811BcC0e4FcD825aA49F9453b065ddF752FcB";
+const GRADUATED_TOPIC = tokenGraduatedTopic();
 
-function makeLog(token0: string, token1: string, pair: string, block = 100): {
+const pad = (addr: string) => "0x" + addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+
+function makeGraduatedLog(token: string, pair: string, block = 130): {
   topics: string[];
   data: string;
   transactionHash: string;
   blockNumber: string;
 } {
-  const pad = (addr: string) =>
-    "0x" + addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-  const data = "0x" + pair.toLowerCase().replace(/^0x/, "").padStart(64, "0") + "00".repeat(32);
   return {
-    topics: [PAIR_TOPIC, pad(token0), pad(token1)],
-    data,
-    transactionHash: "0xabc",
+    // TokenGraduated(address indexed token, address indexed pairAddress, ...4 uint256)
+    topics: [GRADUATED_TOPIC, pad(token), pad(pair)],
+    data: "0x" + "00".repeat(32 * 4),
+    transactionHash: "0xgrad",
     blockNumber: "0x" + block.toString(16),
   };
 }
 
 function makeRpcResponses(...steps: Array<{ method: string; result: unknown }>): typeof fetch {
   let idx = 0;
-  return (async (url: string, init?: RequestInit) => {
+  return (async (_url: string, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? "{}"));
-    if (idx >= steps.length) {
-      throw new Error(`unexpected extra RPC call: ${body.method}`);
-    }
+    if (idx >= steps.length) throw new Error(`unexpected extra RPC call: ${body.method}`);
     const step = steps[idx++];
     if (step.method !== body.method) {
       throw new Error(`expected ${step.method} got ${body.method} at step ${idx - 1}`);
@@ -58,28 +54,14 @@ function makeRpcResponses(...steps: Array<{ method: string; result: unknown }>):
 }
 
 describe("topicToAddress", () => {
-  it("extracts the last 20 bytes as a checksummed lowercase address", () => {
+  it("extracts the last 20 bytes as a lowercase address", () => {
     const topic = "0x000000000000000000000000abcdef0123456789abcdef0123456789abcdef01";
     expect(topicToAddress(topic)).toBe("0xabcdef0123456789abcdef0123456789abcdef01");
   });
 });
 
-describe("eip1167Implementation", () => {
-  it("extracts the implementation address from a minimal-proxy bytecode", () => {
-    const code =
-      "0x363d3d373d3d3d363d73fbec3d3c42427dc2c08a2401e53758f02cecb5405af43d82803e903d91602b57fd5bf3";
-    expect(eip1167Implementation(code)).toBe("0xfbec3d3c42427dc2c08a2401e53758f02cecb540");
-  });
-
-  it("returns null for non-proxy bytecode", () => {
-    expect(eip1167Implementation("0x6080604052")).toBeNull();
-    expect(eip1167Implementation("0x")).toBeNull();
-  });
-});
-
 describe("decodeAbiString", () => {
   it("decodes a standard ABI string return", () => {
-    // offset=0x20, length=5, data="STONK" padded to 32 bytes
     const hex =
       "0x" +
       "0000000000000000000000000000000000000000000000000000000000000020" +
@@ -90,7 +72,7 @@ describe("decodeAbiString", () => {
   });
 
   it("decodes bytes32 fallback when no offset/length structure", () => {
-    const hex = "0x" + "53504358".padEnd(64, "0"); // "SPCX" + zeros
+    const hex = "0x" + "53504358".padEnd(64, "0");
     expect(decodeAbiString(hex)).toBe("SPCX");
   });
 
@@ -110,12 +92,11 @@ describe("createAltfunWatcher cold start", () => {
 
     const watcher = createAltfunWatcher({
       rpcUrl: "https://rpc.test",
-      factoryAddress: FACTORY,
-      factoryKind: "v2",
+      bondingContract: BONDING,
       pollIntervalMs: 60_000,
       stateFilePath: stateFile,
       label: "alt.fun",
-      tradingUrlTemplate: "https://example.test/{token}",
+      tradingUrlTemplate: "https://alt.fun/coin/{token}",
       logger: silentLogger,
       notifier,
       fetchImpl,
@@ -124,7 +105,6 @@ describe("createAltfunWatcher cold start", () => {
     await watcher.runOnce();
     expect(notifier.notify).not.toHaveBeenCalled();
     expect(watcher.getLastBlock()).toBe(1000);
-
     const persisted = JSON.parse(await fs.readFile(stateFile, "utf8"));
     expect(persisted.lastBlock).toBe(1000);
 
@@ -132,305 +112,38 @@ describe("createAltfunWatcher cold start", () => {
   });
 });
 
-describe("createAltfunWatcher sweep", () => {
-  it("notifies a new pair and resolves token symbol via eth_call", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
-    const stateFile = path.join(tmpDir, "altfun-state.json");
-    // Pre-seed lastBlock to skip the cold-start branch.
-    await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
-
-    const newToken = "0xabcdef0123456789abcdef0123456789abcdef01";
-    const quote = "0x1111111111111111111111111111111111111111";
-    const pair = "0x2222222222222222222222222222222222222222";
-    const symbolHex =
-      "0x" +
-      "0000000000000000000000000000000000000000000000000000000000000020" +
-      "0000000000000000000000000000000000000000000000000000000000000005" +
-      "53544f4e4b" +
-      "00".repeat(27);
-    const nameHex =
-      "0x" +
-      "0000000000000000000000000000000000000000000000000000000000000020" +
-      "0000000000000000000000000000000000000000000000000000000000000006" +
-      "53746f6e6b73" +
-      "00".repeat(26);
-
-    const fetchImpl = makeRpcResponses(
-      { method: "eth_blockNumber", result: "0x96" }, // 150
-      { method: "eth_getLogs", result: [makeLog(newToken, quote, pair, 130)] },
-      { method: "eth_call", result: symbolHex }, // symbol()
-      { method: "eth_call", result: nameHex } //   name()
-    );
-
-    const notifyMock = vi.fn().mockResolvedValue(undefined);
-    const notifier: Notifier = { notify: notifyMock };
-
-    const watcher = createAltfunWatcher({
-      rpcUrl: "https://rpc.test",
-      factoryAddress: FACTORY,
-      factoryKind: "v2",
-      quoteTokenAddress: quote,
-      pollIntervalMs: 60_000,
-      stateFilePath: stateFile,
-      label: "alt.fun",
-      tradingUrlTemplate: "https://example.test/{token}",
-      logger: silentLogger,
-      notifier,
-      fetchImpl,
-    });
-
-    await watcher.runOnce();
-    expect(notifyMock).toHaveBeenCalledOnce();
-    const event = notifyMock.mock.calls[0][0];
-    expect(event.symbol).toBe("STONK");
-    expect(event.market).toBe("spot");
-    expect(event.dex).toBe("alt.fun");
-    expect(event.tradingUrl).toBe(`https://example.test/${newToken}`);
-    expect(watcher.getLastBlock()).toBe(150);
-
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  });
-
-  it("decodes V3 PoolCreated where pool address is the second 32-byte data slot", async () => {
+describe("createAltfunWatcher graduation sweep", () => {
+  it("notifies on a TokenGraduated event, resolving symbol and pair", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
     const stateFile = path.join(tmpDir, "altfun-state.json");
     await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
 
-    const newToken = "0x495f3eb3ac312e03158a58f1c995dbd791500000";
-    const quote = "0x5555555555555555555555555555555555555555";
-    const pool = "0x4a96c7b51b8d091b4b3bad81933f21f491c5d2bc";
-    const v3Topic = eventTopicFor("v3");
-    const pad = (a: string) => "0x" + a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-    const v3Log = {
-      // PoolCreated has 4 topics: sig, token0, token1, fee
-      topics: [v3Topic, pad(newToken), pad(quote), pad("0xbb8")],
-      // data: tickSpacing (slot 0) + pool address (slot 1)
-      data:
-        "0x" +
-        "00".repeat(31) +
-        "3c" + // tickSpacing = 60
-        pool.toLowerCase().replace(/^0x/, "").padStart(64, "0"),
-      transactionHash: "0xdef",
-      blockNumber: "0x96",
-    };
-    const symbolHex =
-      "0x" +
-      "0000000000000000000000000000000000000000000000000000000000000020" +
-      "0000000000000000000000000000000000000000000000000000000000000006" +
-      "53544f4e4b53" +
-      "00".repeat(26);
-    const nameHex =
-      "0x" +
-      "0000000000000000000000000000000000000000000000000000000000000020" +
-      "0000000000000000000000000000000000000000000000000000000000000006" +
-      "53746f6e6b73" +
-      "00".repeat(26);
-
-    const fetchImpl = makeRpcResponses(
-      { method: "eth_blockNumber", result: "0x96" },
-      { method: "eth_getLogs", result: [v3Log] },
-      { method: "eth_call", result: symbolHex },
-      { method: "eth_call", result: nameHex }
-    );
-
-    const notifyMock = vi.fn().mockResolvedValue(undefined);
-    const watcher = createAltfunWatcher({
-      rpcUrl: "https://rpc.test",
-      factoryAddress: "0xff7b3e8c00e57ea31477c32a5b52a58eea47b072",
-      factoryKind: "v3",
-      quoteTokenAddress: quote,
-      pollIntervalMs: 60_000,
-      stateFilePath: stateFile,
-      label: "alt.fun",
-      tradingUrlTemplate: "https://example.test/{token}?pool={pair}",
-      logger: silentLogger,
-      notifier: { notify: notifyMock },
-      fetchImpl,
-    });
-
-    await watcher.runOnce();
-    expect(notifyMock).toHaveBeenCalledOnce();
-    const event = notifyMock.mock.calls[0][0];
-    expect(event.symbol).toBe("STONKS");
-    expect(event.market).toBe("spot");
-    expect(event.dex).toBe("alt.fun");
-    expect(event.tradingUrl).toBe(`https://example.test/${newToken}?pool=${pool}`);
-
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  });
-
-  it("skips pools where neither token is an EIP-1167 proxy to the configured impl", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
-    const stateFile = path.join(tmpDir, "altfun-state.json");
-    await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
-
-    const tokenA = "0x0c63c0fb1e95c8a337835e358fe9a83dc1e01d1e"; // HYPERSQUANCH — not a proxy
-    const tokenB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    const pool = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-    const v3Topic = eventTopicFor("v3");
-    const pad = (a: string) => "0x" + a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-    const v3Log = {
-      topics: [v3Topic, pad(tokenA), pad(tokenB), pad("0x2710")],
-      data: "0x" + "00".repeat(31) + "c8" + pool.toLowerCase().replace(/^0x/, "").padStart(64, "0"),
-      transactionHash: "0xnope",
-      blockNumber: "0x96",
-    };
-    const nonProxyBytecode = "0x6080604052";
-
-    const fetchImpl = makeRpcResponses(
-      { method: "eth_blockNumber", result: "0x96" },
-      { method: "eth_getLogs", result: [v3Log] },
-      { method: "eth_getCode", result: nonProxyBytecode },
-      { method: "eth_getCode", result: nonProxyBytecode }
-      // No eth_call should follow — pool is skipped.
-    );
-
-    const notifyMock = vi.fn().mockResolvedValue(undefined);
-    const watcher = createAltfunWatcher({
-      rpcUrl: "https://rpc.test",
-      factoryAddress: "0xff7b3e8c00e57ea31477c32a5b52a58eea47b072",
-      factoryKind: "v3",
-      tokenImplementationAddress: "0xfbec3d3c42427dc2c08a2401e53758f02cecb540",
-      pollIntervalMs: 60_000,
-      stateFilePath: stateFile,
-      label: "alt.fun",
-      tradingUrlTemplate: "https://alt.fun/coin/{token}",
-      logger: silentLogger,
-      notifier: { notify: notifyMock },
-      fetchImpl,
-    });
-
-    await watcher.runOnce();
-    expect(notifyMock).not.toHaveBeenCalled();
-
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  });
-
-  it("picks the EIP-1167 proxy token (not token0) as the new listing — fixes V3 token ordering", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
-    const stateFile = path.join(tmpDir, "altfun-state.json");
-    await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
-
-    // Reproduces the real ALTSZN graduation: token0 is the spoof "USDC" (not a proxy),
-    // token1 is the alt.fun token (proxy to 0xfbec…b540). The watcher must pick token1.
-    const spoofUsdc = "0xb88339cb7199b77e23db6e890353e22632ba630f"; // token0 — regular contract
-    const altfunToken = "0xc8c1829078ec5735d40ac3ff39e6403c34000000"; // token1 — proxy
-    const impl = "0xfbec3d3c42427dc2c08a2401e53758f02cecb540";
-    const pool = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-    const v3Topic = eventTopicFor("v3");
-    const pad = (a: string) => "0x" + a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-    const v3Log = {
-      topics: [v3Topic, pad(spoofUsdc), pad(altfunToken), pad("0x2710")],
-      data:
-        "0x" +
-        "00".repeat(31) + "c8" +
-        pool.toLowerCase().replace(/^0x/, "").padStart(64, "0"),
-      transactionHash: "0xfed",
-      blockNumber: "0x96",
-    };
-    const proxyBytecode =
-      "0x363d3d373d3d3d363d73" +
-      impl.slice(2) +
-      "5af43d82803e903d91602b57fd5bf3";
-    const altsznSymHex =
-      "0x" +
-      "0000000000000000000000000000000000000000000000000000000000000020" +
-      "0000000000000000000000000000000000000000000000000000000000000006" +
-      "414c54535a4e" + // "ALTSZN"
-      "00".repeat(26);
-    const altsznNameHex =
-      "0x" +
-      "0000000000000000000000000000000000000000000000000000000000000020" +
-      "0000000000000000000000000000000000000000000000000000000000000006" +
-      "414c54535a4e" +
-      "00".repeat(26);
-    // Spoof USDC bytecode (just a non-proxy stub)
-    const spoofBytecode = "0x6080604052";
-
-    const fetchImpl = makeRpcResponses(
-      { method: "eth_blockNumber", result: "0x96" },
-      { method: "eth_getLogs", result: [v3Log] },
-      // pickNewToken calls eth_getCode on token0 then token1 (Promise.all order is
-      // implementation-defined but our mock requires deterministic ordering, so we
-      // match the order the implementation actually emits)
-      { method: "eth_getCode", result: spoofBytecode },
-      { method: "eth_getCode", result: proxyBytecode },
-      { method: "eth_call", result: altsznSymHex }, // symbol()
-      { method: "eth_call", result: altsznNameHex } // name()
-    );
-
-    const notifyMock = vi.fn().mockResolvedValue(undefined);
-    const watcher = createAltfunWatcher({
-      rpcUrl: "https://rpc.test",
-      factoryAddress: "0xff7b3e8c00e57ea31477c32a5b52a58eea47b072",
-      factoryKind: "v3",
-      tokenImplementationAddress: impl,
-      pollIntervalMs: 60_000,
-      stateFilePath: stateFile,
-      label: "alt.fun",
-      tradingUrlTemplate: "https://example.test/{token}",
-      logger: silentLogger,
-      notifier: { notify: notifyMock },
-      fetchImpl,
-    });
-
-    await watcher.runOnce();
-    expect(notifyMock).toHaveBeenCalledOnce();
-    const event = notifyMock.mock.calls[0][0];
-    expect(event.symbol).toBe("ALTSZN");
-    // CRUCIAL: the URL must point at the alt.fun token (token1), NOT the spoof USDC (token0)
-    expect(event.tradingUrl).toBe(`https://example.test/${altfunToken}`);
-
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  });
-
-  it("relaxed mode: picks the non-quote side via quoteAddresses, emits on every pool", async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
-    const stateFile = path.join(tmpDir, "altfun-state.json");
-    await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
-
-    // Mirrors the HypeSato graduation: a regular ERC20 (not a proxy) paired
-    // against alt.fun's spoof-USDC quote. Old strict mode skipped these.
-    const newToken = "0xb872b1700cdeca2a6364c6a30485bb89e18cf558";
-    const quote = "0xb88339cb7199b77e23db6e890353e22632ba630f";
-    const pool = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-    const v3Topic = eventTopicFor("v3");
-    const pad = (a: string) => "0x" + a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-    const v3Log = {
-      // Note: token0 = newToken, token1 = quote (real V3 ordering depends on
-      // numeric address comparison; we hardcode it here for the test)
-      topics: [v3Topic, pad(newToken), pad(quote), pad("0x2710")],
-      data: "0x" + "00".repeat(31) + "c8" + pool.toLowerCase().replace(/^0x/, "").padStart(64, "0"),
-      transactionHash: "0xhs",
-      blockNumber: "0x96",
-    };
+    const token = "0x1e20f45f0582ee5c0530245fed4426cd00000000"; // AURA-like
+    const pair = "0x8a7b6dc7a15842d3d50185ee3fc38e59110ee915";
     const symHex =
       "0x" +
       "0000000000000000000000000000000000000000000000000000000000000020" +
-      "0000000000000000000000000000000000000000000000000000000000000002" +
-      "4853" +
-      "00".repeat(30);
+      "0000000000000000000000000000000000000000000000000000000000000004" +
+      "41555241" + // "AURA"
+      "00".repeat(28);
     const nameHex =
       "0x" +
       "0000000000000000000000000000000000000000000000000000000000000020" +
-      "0000000000000000000000000000000000000000000000000000000000000008" +
-      "4879706553617465" +
-      "00".repeat(24);
+      "0000000000000000000000000000000000000000000000000000000000000004" +
+      "41555241" +
+      "00".repeat(28);
 
     const fetchImpl = makeRpcResponses(
-      { method: "eth_blockNumber", result: "0x96" },
-      { method: "eth_getLogs", result: [v3Log] },
-      { method: "eth_call", result: symHex },
-      { method: "eth_call", result: nameHex }
+      { method: "eth_blockNumber", result: "0x96" }, // 150
+      { method: "eth_getLogs", result: [makeGraduatedLog(token, pair, 130)] },
+      { method: "eth_call", result: symHex }, // symbol()
+      { method: "eth_call", result: nameHex } // name()
     );
 
     const notifyMock = vi.fn().mockResolvedValue(undefined);
     const watcher = createAltfunWatcher({
       rpcUrl: "https://rpc.test",
-      factoryAddress: "0xff7b3e8c00e57ea31477c32a5b52a58eea47b072",
-      factoryKind: "v3",
-      // No tokenImplementationAddress → relaxed mode
-      quoteAddresses: [quote],
+      bondingContract: BONDING,
       pollIntervalMs: 60_000,
       stateFilePath: stateFile,
       label: "alt.fun",
@@ -443,46 +156,46 @@ describe("createAltfunWatcher sweep", () => {
     await watcher.runOnce();
     expect(notifyMock).toHaveBeenCalledOnce();
     const event = notifyMock.mock.calls[0][0];
-    expect(event.symbol).toBe("HS");
-    expect(event.tradingUrl).toBe(`https://alt.fun/coin/${newToken}`);
+    expect(event.symbol).toBe("AURA");
+    expect(event.market).toBe("spot");
+    expect(event.dex).toBe("alt.fun");
+    expect(event.tradingUrl).toBe(`https://alt.fun/coin/${token}`);
+    expect(watcher.getLastBlock()).toBe(150);
 
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("filters out pairs that don't match the configured quote token", async () => {
+  it("falls back to the token address when symbol() and name() are undecodable", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "altfun-"));
     const stateFile = path.join(tmpDir, "altfun-state.json");
     await fs.writeFile(stateFile, JSON.stringify({ lastBlock: 100, lastSweepAt: "t0" }));
 
-    const quote = "0x1111111111111111111111111111111111111111";
-    const tokenA = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const tokenB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    const pair = "0xcccccccccccccccccccccccccccccccccccccccc";
+    const token = "0xabc1230000000000000000000000000000000000";
+    const pair = "0xdef4560000000000000000000000000000000000";
 
     const fetchImpl = makeRpcResponses(
       { method: "eth_blockNumber", result: "0x96" },
-      { method: "eth_getLogs", result: [makeLog(tokenA, tokenB, pair, 130)] }
-      // No eth_call expected since pair is filtered out.
+      { method: "eth_getLogs", result: [makeGraduatedLog(token, pair, 130)] },
+      { method: "eth_call", result: "0x" }, // symbol() empty
+      { method: "eth_call", result: "0x" } //  name() empty
     );
 
     const notifyMock = vi.fn().mockResolvedValue(undefined);
     const watcher = createAltfunWatcher({
       rpcUrl: "https://rpc.test",
-      factoryAddress: FACTORY,
-      factoryKind: "v2",
-      quoteTokenAddress: quote,
+      bondingContract: BONDING,
       pollIntervalMs: 60_000,
       stateFilePath: stateFile,
       label: "alt.fun",
-      tradingUrlTemplate: "https://example.test/{token}",
+      tradingUrlTemplate: "https://alt.fun/coin/{token}",
       logger: silentLogger,
       notifier: { notify: notifyMock },
       fetchImpl,
     });
 
     await watcher.runOnce();
-    expect(notifyMock).not.toHaveBeenCalled();
-    expect(watcher.getLastBlock()).toBe(150);
+    expect(notifyMock).toHaveBeenCalledOnce();
+    expect(notifyMock.mock.calls[0][0].symbol).toBe(token);
 
     await fs.rm(tmpDir, { recursive: true, force: true });
   });

@@ -52,11 +52,7 @@ async function main() {
   const altfun = cfg.altfun
     ? createAltfunWatcher({
         rpcUrl: cfg.altfun.rpcUrl,
-        factoryAddress: cfg.altfun.factoryAddress,
-        factoryKind: cfg.altfun.factoryKind,
-        quoteTokenAddress: cfg.altfun.quoteTokenAddress ?? undefined,
-        tokenImplementationAddress: cfg.altfun.tokenImplementationAddress ?? undefined,
-        quoteAddresses: cfg.altfun.quoteAddresses,
+        bondingContract: cfg.altfun.bondingContract,
         pollIntervalMs: cfg.altfun.pollIntervalMs,
         stateFilePath: cfg.altfun.stateFilePath,
         label: cfg.altfun.label,
@@ -93,8 +89,7 @@ async function main() {
     desktopSound: cfg.enableDesktopSound,
     altfun: cfg.altfun
       ? {
-          factory: cfg.altfun.factoryAddress,
-          quote: cfg.altfun.quoteTokenAddress,
+          bonding: cfg.altfun.bondingContract,
           label: cfg.altfun.label,
           pollIntervalMs: cfg.altfun.pollIntervalMs,
         }
