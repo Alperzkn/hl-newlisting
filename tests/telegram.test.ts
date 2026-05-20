@@ -37,6 +37,38 @@ describe("formatListingMessage", () => {
     expect(msg).not.toMatch(/\d+x/);
   });
 
+  it("uses a graduation header and de-duped label for alt.fun", () => {
+    const event: ListingEvent = {
+      symbol: "AURA",
+      market: "spot",
+      dex: "alt.fun",
+      dexFullName: "alt.fun",
+      detectedAt: "2026-05-20T05:17:08.000Z",
+      tradingUrl: "https://alt.fun/coin/0xabc",
+    };
+    const msg = formatListingMessage(event);
+    expect(msg).toContain("New alt.fun graduation");
+    expect(msg).not.toContain("New Hyperliquid listing");
+    // de-duped: "spot on alt.fun", not "spot on alt.fun [alt.fun]"
+    expect(msg).toContain("Market: spot on alt.fun");
+    expect(msg).not.toContain("[alt.fun]");
+  });
+
+  it("keeps the 'FullName [code]' label for HIP-3 dex perps", () => {
+    const event: ListingEvent = {
+      symbol: "xyz:SPCX",
+      market: "perp",
+      dex: "xyz",
+      dexFullName: "XYZ",
+      maxLeverage: 5,
+      detectedAt: "2026-05-20T12:00:00.000Z",
+      tradingUrl: "https://app.hyperliquid.xyz/trade/xyz:SPCX",
+    };
+    const msg = formatListingMessage(event);
+    expect(msg).toContain("New Hyperliquid listing");
+    expect(msg).toContain("Market: perp on XYZ [xyz] (5x max)");
+  });
+
   it("adds a note for a new quote pair of an existing token", () => {
     const event: ListingEvent = {
       symbol: "KNTQ/USDC",

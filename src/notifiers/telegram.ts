@@ -1,22 +1,36 @@
 // src/notifiers/telegram.ts
 import type { ListingEvent, Notifier } from "../types.js";
 
+// "XYZ [xyz]" when the full name adds info, just "alt.fun" when they're the same.
+function dexLabel(event: ListingEvent): string {
+  if (!event.dex) return "";
+  if (event.dexFullName && event.dexFullName !== event.dex) {
+    return `${event.dexFullName} [${event.dex}]`;
+  }
+  return event.dex;
+}
+
 export function formatListingMessage(event: ListingEvent): string {
   const lines: string[] = [];
-  lines.push("🚨 New Hyperliquid listing");
+  // alt.fun-style HyperEVM graduations are spot pairs carrying a dex label and
+  // aren't Hyperliquid L1 listings, so they get their own header.
+  const isHyperEvmGraduation = event.market === "spot" && !!event.dex;
+  lines.push(
+    isHyperEvmGraduation
+      ? `🚨 New ${event.dexFullName ?? event.dex} graduation`
+      : "🚨 New Hyperliquid listing"
+  );
   lines.push("");
   lines.push(`Symbol: ${event.symbol}`);
   if (event.market === "perp") {
     const lev = event.maxLeverage !== undefined ? ` (${event.maxLeverage}x max)` : "";
     if (event.dex) {
-      const dexLabel = event.dexFullName ? `${event.dexFullName} [${event.dex}]` : event.dex;
-      lines.push(`Market: perp on ${dexLabel}${lev}`);
+      lines.push(`Market: perp on ${dexLabel(event)}${lev}`);
     } else {
       lines.push(`Market: perp${lev}`);
     }
   } else if (event.dex) {
-    const dexLabel = event.dexFullName ? `${event.dexFullName} [${event.dex}]` : event.dex;
-    lines.push(`Market: spot on ${dexLabel}`);
+    lines.push(`Market: spot on ${dexLabel(event)}`);
   } else {
     lines.push(`Market: spot`);
   }
