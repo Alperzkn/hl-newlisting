@@ -1,0 +1,44 @@
+# Auto-deploy to the VPS on every push to main.
+#
+# How it works: GitHub's runner opens an SSH connection into your VPS and runs
+# deploy/update.sh, which pulls the new code, rebuilds, and restarts PM2.
+#
+# One-time setup (see README "Continuous deployment" section):
+#   1. Generate a dedicated deploy keypair.
+#   2. Put the PUBLIC key in the VPS's ~/.ssh/authorized_keys.
+#   3. Add these repo secrets (Settings → Secrets and variables → Actions):
+#        VPS_HOST     — your droplet IP or hostname
+#        VPS_USER     — the SSH user that owns the PM2 process (e.g. root)
+#        VPS_SSH_KEY  — the PRIVATE key (full contents, incl. BEGIN/END lines)
+#        VPS_PORT     — SSH port (usually 22)
+
+name: Deploy to VPS
+
+# Run on pushes to main, but skip if only docs/workflow files changed.
+on:
+  push:
+    branches: [main]
+
+# Avoid overlapping deploys if you push twice quickly — cancel the in-flight one.
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          # Non-interactive SSH may not load your usual PATH, so make sure node,
+          # npm, and pm2 are findable. Covers NodeSource (system) + nvm installs.
+          script: |
+            export PATH="$PATH:/usr/local/bin:/usr/bin"
+            [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh"
+            cd ~/hl-newlisting
+            ./deploy/update.sh

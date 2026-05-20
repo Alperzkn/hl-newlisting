@@ -254,6 +254,48 @@ sudo npm run build
 sudo systemctl restart hl-newlisting
 ```
 
+## Continuous deployment (GitHub Actions)
+
+Once the PM2 deployment is running, you can have GitHub auto-deploy on every push to `main`. The workflow ([.github/workflows/deploy.yml](.github/workflows/deploy.yml)) SSHes into the VPS and runs `deploy/update.sh`.
+
+**Note on SSH direction:** pulling from the repo on your VPS is *VPS → GitHub*. This deploy is the opposite — *GitHub → VPS* — so it needs its own deploy key that GitHub holds.
+
+One-time setup:
+
+```bash
+# 1. On your machine (or the VPS), generate a dedicated deploy keypair (no passphrase):
+ssh-keygen -t ed25519 -f ~/.ssh/hl_deploy -N "" -C "github-actions-deploy"
+
+# 2. Authorize the PUBLIC key on the VPS:
+ssh-copy-id -i ~/.ssh/hl_deploy.pub youruser@your-vps-ip
+#   (or append the contents of hl_deploy.pub to ~/.ssh/authorized_keys on the VPS)
+
+# 3. Print the PRIVATE key to copy into GitHub:
+cat ~/.ssh/hl_deploy
+```
+
+Then in the GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**, add:
+
+| Secret | Value |
+| --- | --- |
+| `VPS_HOST` | your droplet IP or hostname |
+| `VPS_USER` | SSH user that owns the PM2 process (e.g. `root`) |
+| `VPS_SSH_KEY` | the full private key from step 3 (incl. the `BEGIN`/`END` lines) |
+| `VPS_PORT` | SSH port (usually `22`) |
+
+After that, every `git push` to `main` triggers a deploy. Watch it under the repo's **Actions** tab. If a deploy fails, the logs there show exactly which step broke.
+
+## Public notifications via a Telegram channel
+
+To let anyone receive alerts without per-user setup, broadcast to a public Telegram **channel** instead of a single chat:
+
+1. In Telegram: **New Channel** → make it **public** with a username (e.g. `@my_hl_alerts`).
+2. Channel **Administrators → Add Admin →** add your bot, grant **Post Messages**.
+3. Set `TELEGRAM_CHAT_ID` to the channel — either `@my_hl_alerts` or the numeric ID (`-100…`). To get the numeric ID, post once in the channel and open `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+4. **Keep heartbeats out of the public channel:** set `TELEGRAM_HEARTBEAT_CHAT_ID` to your *personal* chat ID so the hourly "still alive" pings don't spam subscribers.
+
+Anyone who joins the channel link then gets every listing alert automatically — no code changes, no subscriber management.
+
 ## Phase 2 — auto-trading (not in scope here)
 
 The notifier is just one consumer of the `ListingEvent` stream. A trading module can be added as a second consumer — register it alongside the notifier in [src/index.ts](src/index.ts) and the detection path stays untouched. Strategy, sizing, and risk parameters belong inside that module.
