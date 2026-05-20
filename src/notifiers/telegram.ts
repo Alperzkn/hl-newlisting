@@ -20,6 +20,9 @@ export function formatListingMessage(event: ListingEvent): string {
   } else {
     lines.push(`Market: spot`);
   }
+  if (event.isNewQuotePair) {
+    lines.push(`Note:   New quote pair — ${event.baseToken} already trades on Hyperliquid`);
+  }
   if (event.midPrice !== undefined) lines.push(`Mid:    $${event.midPrice}`);
   lines.push(`Time:   ${event.detectedAt}`);
   lines.push("");

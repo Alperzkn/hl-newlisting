@@ -36,6 +36,20 @@ describe("formatListingMessage", () => {
     const msg = formatListingMessage(event);
     expect(msg).not.toMatch(/\d+x/);
   });
+
+  it("adds a note for a new quote pair of an existing token", () => {
+    const event: ListingEvent = {
+      symbol: "KNTQ/USDC",
+      market: "spot",
+      detectedAt: "2026-05-20T12:59:21.000Z",
+      tradingUrl: "https://app.hyperliquid.xyz/trade/KNTQ/USDC",
+      isNewQuotePair: true,
+      baseToken: "KNTQ",
+    };
+    const msg = formatListingMessage(event);
+    expect(msg).toMatch(/New quote pair/i);
+    expect(msg).toContain("KNTQ already trades");
+  });
 });
 
 describe("telegram notifier", () => {

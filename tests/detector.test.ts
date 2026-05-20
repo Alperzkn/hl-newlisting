@@ -57,6 +57,32 @@ describe("buildListingEvents", () => {
     ]);
   });
 
+  it("flags a new quote pair when the base token already trades", () => {
+    const diff: SnapshotDiff = { newPerps: [], newSpot: ["@334"] };
+    const events = buildListingEvents(diff, {
+      now,
+      leverage: {},
+      mids: { "@334": 0.1785 },
+      spotDisplayNames: { "@334": "KNTQ/USDC" },
+      knownSpotBases: new Set(["KNTQ", "PURR"]),
+    });
+    expect(events[0].isNewQuotePair).toBe(true);
+    expect(events[0].baseToken).toBe("KNTQ");
+  });
+
+  it("does NOT flag a brand-new token as a new quote pair", () => {
+    const diff: SnapshotDiff = { newPerps: [], newSpot: ["@400"] };
+    const events = buildListingEvents(diff, {
+      now,
+      leverage: {},
+      mids: {},
+      spotDisplayNames: { "@400": "NEWCOIN/USDC" },
+      knownSpotBases: new Set(["KNTQ", "PURR"]),
+    });
+    expect(events[0].isNewQuotePair).toBeUndefined();
+    expect(events[0].baseToken).toBeUndefined();
+  });
+
   it("handles missing mid price", () => {
     const diff: SnapshotDiff = { newPerps: ["NEW"], newSpot: [] };
     const events = buildListingEvents(diff, { now, leverage: { NEW: 10 }, mids: {} });

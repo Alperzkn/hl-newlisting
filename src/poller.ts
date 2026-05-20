@@ -107,11 +107,20 @@ export function createPoller(deps: PollerDeps): Poller {
         return {} as Record<string, number>;
       });
 
+      // Base tokens already trading in a known spot pair — used to flag new
+      // quote pairs for existing tokens (e.g. KNTQ/USDC when KNTQ/USDH exists).
+      const knownSpotBases = new Set<string>();
+      for (const knownName of Object.keys(known.spot)) {
+        const dn = spotMeta.displayNames[knownName];
+        if (dn && dn.includes("/")) knownSpotBases.add(dn.split("/")[0]);
+      }
+
       const events = buildListingEvents(diff, {
         now: lastPollAt,
         leverage: meta.leverage,
         mids,
         spotDisplayNames: spotMeta.displayNames,
+        knownSpotBases,
       });
 
       for (const s of diff.newPerps) known.perps[s] = { firstSeen: lastPollAt };

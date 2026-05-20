@@ -9,6 +9,10 @@ export type ListingEvent = {
   maxLeverage?: number;
   midPrice?: number;
   tradingUrl: string;
+  // Set for spot pairs whose base token already trades in another pair
+  // (e.g. KNTQ/USDC when KNTQ/USDH already exists) — a new market, not a new token.
+  isNewQuotePair?: boolean;
+  baseToken?: string;
 };
 
 export type AssetSnapshot = {

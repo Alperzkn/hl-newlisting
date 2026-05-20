@@ -8,6 +8,8 @@ export type EnrichmentInput = {
   mids: Record<string, number>;
   /** Maps canonical spot names like "@335" → "HPL/USDC" for display. */
   spotDisplayNames?: Record<string, string>;
+  /** Base-token symbols already trading in a known spot pair (e.g. {"KNTQ","PURR"}). */
+  knownSpotBases?: Set<string>;
 };
 
 export function buildListingEvents(diff: SnapshotDiff, enrich: EnrichmentInput): ListingEvent[] {
@@ -33,6 +35,11 @@ export function buildListingEvents(diff: SnapshotDiff, enrich: EnrichmentInput):
       detectedAt: enrich.now,
       tradingUrl: `https://app.hyperliquid.xyz/trade/${display}`,
     };
+    const base = display.includes("/") ? display.split("/")[0] : undefined;
+    if (base && enrich.knownSpotBases?.has(base)) {
+      event.isNewQuotePair = true;
+      event.baseToken = base;
+    }
     if (enrich.mids[symbol] !== undefined) event.midPrice = enrich.mids[symbol];
     events.push(event);
   }
