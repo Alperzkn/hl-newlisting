@@ -1,4 +1,5 @@
 # Auto-deploy to the VPS on every push to main.
+# (CD pipeline verified live — see the Actions tab for run history.)
 #
 # How it works: GitHub's runner opens an SSH connection into your VPS and runs
 # deploy/update.sh, which pulls the new code, rebuilds, and restarts PM2.
