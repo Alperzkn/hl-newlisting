@@ -69,6 +69,18 @@ describe("formatListingMessage", () => {
     expect(msg).toContain("Market: perp on XYZ [xyz] (5x max)");
   });
 
+  it("renders the time in a human-readable UTC form", () => {
+    const event: ListingEvent = {
+      symbol: "SOL",
+      market: "perp",
+      detectedAt: "2026-05-20T15:59:04.288Z",
+      tradingUrl: "https://app.hyperliquid.xyz/trade/SOL",
+    };
+    const msg = formatListingMessage(event);
+    expect(msg).toContain("Time:   2026-05-20 15:59:04 UTC");
+    expect(msg).not.toContain("2026-05-20T15:59:04.288Z");
+  });
+
   it("adds a note for a new quote pair of an existing token", () => {
     const event: ListingEvent = {
       symbol: "KNTQ/USDC",

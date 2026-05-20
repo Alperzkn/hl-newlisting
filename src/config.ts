@@ -58,7 +58,7 @@ function loadAltfunConfig(stateFilePath: string): AltfunConfig | null {
     pollIntervalMs: num("ALTFUN_POLL_INTERVAL_MS", 15000),
     stateFilePath: process.env.ALTFUN_STATE_FILE_PATH || path.join(defaultStateDir, "altfun-state.json"),
     label: process.env.ALTFUN_LABEL || "alt.fun",
-    tradingUrlTemplate: process.env.ALTFUN_TRADING_URL_TEMPLATE || "https://alt.fun/coin/{token}",
+    tradingUrlTemplate: process.env.ALTFUN_TRADING_URL_TEMPLATE || "https://alt.fun/token/{token}",
   };
 }
 

@@ -10,6 +10,12 @@ function dexLabel(event: ListingEvent): string {
   return event.dex;
 }
 
+// "2026-05-20T15:59:04.288Z" -> "2026-05-20 15:59:04 UTC"
+function formatTime(iso: string): string {
+  const m = iso.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);
+  return m ? `${m[1]} ${m[2]} UTC` : iso;
+}
+
 export function formatListingMessage(event: ListingEvent): string {
   const lines: string[] = [];
   // alt.fun-style HyperEVM graduations are spot pairs carrying a dex label and
@@ -38,7 +44,7 @@ export function formatListingMessage(event: ListingEvent): string {
     lines.push(`Note:   New quote pair — ${event.baseToken} already trades on Hyperliquid`);
   }
   if (event.midPrice !== undefined) lines.push(`Mid:    $${event.midPrice}`);
-  lines.push(`Time:   ${event.detectedAt}`);
+  lines.push(`Time:   ${formatTime(event.detectedAt)}`);
   lines.push("");
   lines.push(event.tradingUrl);
   return lines.join("\n");
